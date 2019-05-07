@@ -1,6 +1,6 @@
 #[macro_use]
 extern crate nom;
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::io::{Read, Seek, BufRead, BufReader};
 use std::fmt;
 use std::error::Error;
@@ -18,7 +18,7 @@ pub struct TiffReader<R> {
 
 #[derive(Debug)]
 struct SubfileFields {
-    fields: HashMap<u16, types::LazyFieldValues>
+    fields: BTreeMap<u16, types::LazyFieldValues>
 }
 
 impl<R: Read + Seek> TiffReader<R> {
@@ -71,7 +71,7 @@ impl<R: Read + Seek> TiffReader<R> {
                     match ifd_parse_result {
                         Ok((_, ifd)) => {
                             println!("Parsed IFD: {:?}", ifd);
-                            let mut fields_map = HashMap::new();
+                            let mut fields_map = BTreeMap::new();
                             for entry in ifd.directory_entries {
                                 let lazy_field_values = parsers::lazy_field_values_from_ifd_entry(&entry, self.endianness);
                                 
