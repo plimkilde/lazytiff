@@ -98,6 +98,27 @@ impl<R: Read + Seek> TiffReader<R> {
         
         Ok(())
     }
+    
+    fn get_subfile_lazy_field(&self, subfile: usize, tag: u16) -> Option<&types::LazyFieldValues> {
+        self.subfile_fields_vec[subfile].fields.get(&tag)
+    }
+    
+    fn get_subfile_field(&mut self, subfile: usize, tag: u16) -> Option<types::FieldValues> {
+        let lazy_result = self.get_subfile_lazy_field(subfile, tag);
+        match lazy_result {
+            Some(types::LazyFieldValues::NotLoaded {field_type, num_values, offset}) => {
+                let read_size = types::estimate_size(field_type, *num_values);
+                let mut read_buffer: Vec<u8> = vec![0u8; read_size.unwrap() as usize]; //FIXME: "as" cast
+                
+                self.buf_reader.seek(std::io::SeekFrom::Start(0)).unwrap();
+                self.buf_reader.read_exact(&mut read_buffer).unwrap();
+                unreachable!() //PLACEHOLDER
+            },
+            Some(types::LazyFieldValues::Loaded(loaded_field_values)) => Some(loaded_field_values.clone()),
+            Some(types::LazyFieldValues::Unknown {field_type, num_values, values_or_offset}) => None,
+            None => None
+        }
+    }
 }
 
 #[derive(Debug)]

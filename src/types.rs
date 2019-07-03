@@ -19,7 +19,7 @@ pub struct IfdEntry {
     pub values_or_offset: [u8; 4]
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum FieldType {
     Byte,      //  1
     Ascii,     //  2
@@ -35,7 +35,7 @@ pub enum FieldType {
     Double,    // 12
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum FieldValues {
     Byte(Vec<u8>),             //  1
     Ascii(Vec<u8>),            //  2 TODO: when to convert to std::ffi::CStr??
@@ -51,21 +51,39 @@ pub enum FieldValues {
     Double(Vec<f64>)           // 12
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum LazyFieldValues {
     Loaded(FieldValues),
     NotLoaded {field_type: FieldType, num_values: u32, offset: u32},
     Unknown {field_type: u16, num_values: u32, values_or_offset: [u8; 4]}
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct Rational {
     pub numerator: u32,
     pub denominator: u32
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct SRational {
     pub numerator: i32,
     pub denominator: i32
+}
+
+//TODO: let field types know their own size?
+pub fn estimate_size(field_type: &FieldType, num_values: u32) -> Option<u32> {
+    match field_type {
+        FieldType::Byte => num_values.checked_mul(1),
+        FieldType::Ascii => num_values.checked_mul(1),
+        FieldType::Short => num_values.checked_mul(2),
+        FieldType::Long => num_values.checked_mul(4),
+        FieldType::Rational => num_values.checked_mul(8),
+        FieldType::SByte => num_values.checked_mul(1),
+        FieldType::Undefined => num_values.checked_mul(1),
+        FieldType::SShort => num_values.checked_mul(2),
+        FieldType::SLong => num_values.checked_mul(4),
+        FieldType::SRational => num_values.checked_mul(8),
+        FieldType::Float => num_values.checked_mul(4),
+        FieldType::Double => num_values.checked_mul(8),
+    }
 }
