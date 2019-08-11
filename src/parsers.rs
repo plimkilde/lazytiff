@@ -1,13 +1,13 @@
-use nom::{le_u32, le_i32};
-use nom::{be_u32, be_i32};
+use nom::number::streaming::{le_u32, le_i32};
+use nom::number::streaming::{be_u32, be_i32};
 
 use crate::types;
 use crate::types::{FieldType, FieldValues, LazyFieldValues};
 
 named!(pub header<types::Header>, do_parse!(
     endianness: alt!(
-        value!(nom::Endianness::Little, tag!("II\x2A\x00")) |
-        value!(nom::Endianness::Big, tag!("MM\x00\x2A"))
+        value!(nom::number::Endianness::Little, tag!("II\x2A\x00")) |
+        value!(nom::number::Endianness::Big, tag!("MM\x00\x2A"))
     ) >>
     offset_to_first_ifd: u32!(endianness) >>
     (types::Header {
@@ -16,9 +16,9 @@ named!(pub header<types::Header>, do_parse!(
     })
 ));
 
-named_args!(pub ifd(endianness: nom::Endianness)<types::Ifd>, do_parse!(
+named_args!(pub ifd(endianness: nom::number::Endianness)<types::Ifd>, do_parse!(
     num_directory_entries: u16!(endianness) >>
-    directory_entries: count!(apply!(ifd_entry, endianness), usize::from(num_directory_entries)) >>
+    directory_entries: count!(call!(ifd_entry, endianness), usize::from(num_directory_entries)) >>
     offset_of_next_ifd: u32!(endianness) >>
     (types::Ifd {
         num_directory_entries: num_directory_entries,
@@ -27,7 +27,7 @@ named_args!(pub ifd(endianness: nom::Endianness)<types::Ifd>, do_parse!(
     })
 ));
 
-named_args!(pub ifd_entry(endianness: nom::Endianness)<types::IfdEntry>, do_parse!(
+named_args!(pub ifd_entry(endianness: nom::number::Endianness)<types::IfdEntry>, do_parse!(
     tag: u16!(endianness) >>
     field_type: u16!(endianness) >>
     num_values: u32!(endianness) >>
@@ -40,11 +40,11 @@ named_args!(pub ifd_entry(endianness: nom::Endianness)<types::IfdEntry>, do_pars
     })
 ));
 
-pub fn lazy_field_values_from_ifd_entry(ifd_entry: &types::IfdEntry, endianness: nom::Endianness) -> LazyFieldValues {
+pub fn lazy_field_values_from_ifd_entry(ifd_entry: &types::IfdEntry, endianness: nom::number::Endianness) -> LazyFieldValues {
     // Used only if the values don't fit in the 4 bytes of the IFD entry.
     let offset = match endianness {
-        nom::Endianness::Little => u32::from_le_bytes(ifd_entry.values_or_offset),
-        nom::Endianness::Big => u32::from_be_bytes(ifd_entry.values_or_offset)
+        nom::number::Endianness::Little => u32::from_le_bytes(ifd_entry.values_or_offset),
+        nom::number::Endianness::Big => u32::from_be_bytes(ifd_entry.values_or_offset)
     };
     
     match ifd_entry.field_type {
@@ -78,8 +78,8 @@ pub fn lazy_field_values_from_ifd_entry(ifd_entry: &types::IfdEntry, endianness:
                 for i in 0..ifd_entry.num_values {
                     let value_bytes: [u8; 2] = [ifd_entry.values_or_offset[2*(i as usize)], ifd_entry.values_or_offset[2*(i as usize)+1]];
                     let value = match endianness {
-                        nom::Endianness::Little => u16::from_le_bytes(value_bytes),
-                        nom::Endianness::Big => u16::from_be_bytes(value_bytes)
+                        nom::number::Endianness::Little => u16::from_le_bytes(value_bytes),
+                        nom::number::Endianness::Big => u16::from_be_bytes(value_bytes)
                     };
                     values_vec.push(value);
                 }
@@ -97,8 +97,8 @@ pub fn lazy_field_values_from_ifd_entry(ifd_entry: &types::IfdEntry, endianness:
         4 => { // LONG
             if ifd_entry.num_values <= 1 {
                 let value = match endianness {
-                    nom::Endianness::Little => u32::from_le_bytes(ifd_entry.values_or_offset),
-                    nom::Endianness::Big => u32::from_be_bytes(ifd_entry.values_or_offset)
+                    nom::number::Endianness::Little => u32::from_le_bytes(ifd_entry.values_or_offset),
+                    nom::number::Endianness::Big => u32::from_be_bytes(ifd_entry.values_or_offset)
                 };
                 let values_vec = vec![value];
                 LazyFieldValues::Loaded(FieldValues::Long(values_vec))
@@ -153,8 +153,8 @@ pub fn lazy_field_values_from_ifd_entry(ifd_entry: &types::IfdEntry, endianness:
                 for i in 0..ifd_entry.num_values {
                     let value_bytes: [u8; 2] = [ifd_entry.values_or_offset[2*(i as usize)], ifd_entry.values_or_offset[2*(i as usize)+1]];
                     let value = match endianness {
-                        nom::Endianness::Little => i16::from_le_bytes(value_bytes),
-                        nom::Endianness::Big => i16::from_be_bytes(value_bytes)
+                        nom::number::Endianness::Little => i16::from_le_bytes(value_bytes),
+                        nom::number::Endianness::Big => i16::from_be_bytes(value_bytes)
                     };
                     values_vec.push(value);
                 }
@@ -172,8 +172,8 @@ pub fn lazy_field_values_from_ifd_entry(ifd_entry: &types::IfdEntry, endianness:
         9 => { // SLONG
             if ifd_entry.num_values <= 1 {
                 let value = match endianness {
-                    nom::Endianness::Little => i32::from_le_bytes(ifd_entry.values_or_offset),
-                    nom::Endianness::Big => i32::from_be_bytes(ifd_entry.values_or_offset)
+                    nom::number::Endianness::Little => i32::from_le_bytes(ifd_entry.values_or_offset),
+                    nom::number::Endianness::Big => i32::from_be_bytes(ifd_entry.values_or_offset)
                 };
                 let values_vec = vec![value];
                 LazyFieldValues::Loaded(FieldValues::SLong(values_vec))
@@ -197,8 +197,8 @@ pub fn lazy_field_values_from_ifd_entry(ifd_entry: &types::IfdEntry, endianness:
         11 => { // FLOAT
             if ifd_entry.num_values <= 1 {
                 let values_vec = match endianness {
-                    nom::Endianness::Little => vec![f32::from_bits(u32::from_le_bytes(ifd_entry.values_or_offset))],
-                    nom::Endianness::Big => vec![f32::from_bits(u32::from_be_bytes(ifd_entry.values_or_offset))]
+                    nom::number::Endianness::Little => vec![f32::from_bits(u32::from_le_bytes(ifd_entry.values_or_offset))],
+                    nom::number::Endianness::Big => vec![f32::from_bits(u32::from_be_bytes(ifd_entry.values_or_offset))]
                 };
                 LazyFieldValues::Loaded(FieldValues::Float(values_vec))
             }
@@ -227,7 +227,7 @@ pub fn lazy_field_values_from_ifd_entry(ifd_entry: &types::IfdEntry, endianness:
     }
 }
 
-named_args!(pub rational(endianness: nom::Endianness)<types::Rational>, do_parse!(
+named_args!(pub rational(endianness: nom::number::Endianness)<types::Rational>, do_parse!(
     numerator: u32!(endianness) >>
     denominator: u32!(endianness) >>
     (types::Rational {
@@ -254,7 +254,7 @@ named!(pub be_rational<types::Rational>, do_parse!(
     })
 ));
 
-named_args!(pub srational(endianness: nom::Endianness)<types::SRational>, do_parse!(
+named_args!(pub srational(endianness: nom::number::Endianness)<types::SRational>, do_parse!(
     numerator: i32!(endianness) >>
     denominator: i32!(endianness) >>
     (types::SRational {

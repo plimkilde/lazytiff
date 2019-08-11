@@ -1,6 +1,6 @@
 #[derive(Debug)]
 pub struct Header {
-    pub endianness: nom::Endianness,
+    pub endianness: nom::number::Endianness,
     pub offset_to_first_ifd: u32
 }
 

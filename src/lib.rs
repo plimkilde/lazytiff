@@ -10,7 +10,7 @@ mod parsers;
 
 #[derive(Debug)]
 pub struct TiffReader<R> {
-    endianness: nom::Endianness,
+    endianness: nom::number::Endianness,
     buf_reader: std::io::BufReader<R>,
     offset_to_first_ifd: u32,
     subfile_fields_vec: Vec<SubfileFields>
@@ -57,7 +57,9 @@ impl<R: Read + Seek> TiffReader<R> {
             
             let mut ifd_entry_count_buffer = [0u8; 2];
             self.buf_reader.read_exact(&mut ifd_entry_count_buffer)?;
-            let ifd_entry_count_parse_result = nom::u16!(&ifd_entry_count_buffer, self.endianness);
+            
+            // compiler cant't infer this type for some reason
+            let ifd_entry_count_parse_result: Result<(&[u8], u16), nom::Err<(&[u8], nom::error::ErrorKind)>> = nom::u16!(&ifd_entry_count_buffer, self.endianness);
             
             match ifd_entry_count_parse_result {
                 Ok((_, ifd_entry_count)) => {
@@ -147,7 +149,7 @@ mod tests {
         let header_bytes = b"II\x2A\x00\xD2\x02\x96\x49";
         let mut cursor = Cursor::new(header_bytes);
         let tiff_reader = crate::TiffReader::new(cursor).unwrap();
-        assert_eq!(tiff_reader.endianness, nom::Endianness::Little);
+        assert_eq!(tiff_reader.endianness, nom::number::Endianness::Little);
         assert_eq!(tiff_reader.offset_to_first_ifd, 1234567890u32);
         println!("{:#?}", tiff_reader);
     }
@@ -157,7 +159,7 @@ mod tests {
         let header_bytes = b"MM\x00\x2A\x49\x96\x02\xD2";
         let mut cursor = Cursor::new(header_bytes);
         let tiff_reader = crate::TiffReader::new(cursor).unwrap();
-        assert_eq!(tiff_reader.endianness, nom::Endianness::Big);
+        assert_eq!(tiff_reader.endianness, nom::number::Endianness::Big);
         assert_eq!(tiff_reader.offset_to_first_ifd, 1234567890u32);
         println!("{:#?}", tiff_reader);
     }
@@ -205,7 +207,7 @@ mod tests {
         let mut cursor = Cursor::new(tiff_bytes);
         let mut tiff_reader = crate::TiffReader::new(cursor).unwrap();
         println!("{:#?}", tiff_reader);
-        assert_eq!(tiff_reader.endianness, nom::Endianness::Little);
+        assert_eq!(tiff_reader.endianness, nom::number::Endianness::Little);
         assert_eq!(tiff_reader.offset_to_first_ifd, 13);
         tiff_reader.read_all_ifds().unwrap();
         assert_eq!(tiff_reader.subfile_fields_vec.len(), 1);
