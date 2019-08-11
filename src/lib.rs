@@ -57,7 +57,9 @@ impl<R: Read + Seek> TiffReader<R> {
             
             let mut ifd_entry_count_buffer = [0u8; 2];
             self.buf_reader.read_exact(&mut ifd_entry_count_buffer)?;
-            let ifd_entry_count_parse_result = nom::u16!(&ifd_entry_count_buffer, self.endianness);
+            
+            // compiler cant't infer this type for some reason
+            let ifd_entry_count_parse_result: Result<(&[u8], u16), nom::Err<(&[u8], nom::error::ErrorKind)>> = nom::u16!(&ifd_entry_count_buffer, self.endianness);
             
             match ifd_entry_count_parse_result {
                 Ok((_, ifd_entry_count)) => {

@@ -18,7 +18,7 @@ named!(pub header<types::Header>, do_parse!(
 
 named_args!(pub ifd(endianness: nom::number::Endianness)<types::Ifd>, do_parse!(
     num_directory_entries: u16!(endianness) >>
-    directory_entries: count!(apply!(ifd_entry, endianness), usize::from(num_directory_entries)) >>
+    directory_entries: count!(call!(ifd_entry, endianness), usize::from(num_directory_entries)) >>
     offset_of_next_ifd: u32!(endianness) >>
     (types::Ifd {
         num_directory_entries: num_directory_entries,
