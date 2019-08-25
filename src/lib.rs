@@ -53,14 +53,12 @@ impl<R: Read + Seek> TiffReader<R> {
             
             let ifd_entry_count = nom::u16!(&ifd_entry_count_buffer, self.endianness)?.1;
             
-            println!("ifd_entry_count: {}", ifd_entry_count);
             let mut ifd_buffer: Vec<u8> = vec![0u8; 2 + 12*usize::from(ifd_entry_count) + 4];
             self.buf_reader.seek(std::io::SeekFrom::Start(u64::from(ifd_offset)))?;
             
             self.buf_reader.read_exact(&mut ifd_buffer)?;
             let ifd = parsers::ifd(&ifd_buffer, self.endianness)?.1;
             
-            println!("Parsed IFD: {:?}", ifd);
             let mut fields_map = BTreeMap::new();
             for entry in ifd.directory_entries {
                 let lazy_field_values = parsers::lazy_field_values_from_ifd_entry(&entry, self.endianness);
