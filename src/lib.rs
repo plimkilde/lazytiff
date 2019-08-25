@@ -22,35 +22,29 @@ struct SubfileFields {
 }
 
 impl<R: Read + Seek> TiffReader<R> {
-    pub fn new(reader: R) -> Result<Self, Box<dyn Error>> {
+    pub fn new(reader: R) -> Result<Self, TiffReadError> {
         let mut buf_reader = BufReader::new(reader);
         let mut header_bytes = [0u8; 8];
         buf_reader.seek(std::io::SeekFrom::Start(0))?;
         buf_reader.read_exact(&mut header_bytes)?;
-        let header_parse_result = parsers::header(&header_bytes);
-        match header_parse_result {
-            Ok((_, header)) => {
-                /* The TIFF 6.0 spec says at least one IFD is mandatory
-                 * (and that IFD needs to start after the header). */
-                if header.offset_to_first_ifd >= 8 {
-                    Ok(TiffReader {
-                        endianness: header.endianness,
-                        buf_reader: buf_reader,
-                        offset_to_first_ifd: header.offset_to_first_ifd,
-                        subfile_fields_vec: Vec::new()
-                    })
-                }
-                else {
-                    Err(Box::new(TiffReadError))
-                }
-            }
-            Err(_) => {
-                Err(Box::new(TiffReadError))
-            }
+        let header = parsers::header(&header_bytes)?.1;
+        
+        /* The TIFF 6.0 spec says at least one IFD is mandatory
+         * (and that IFD needs to start after the header). */
+        if header.offset_to_first_ifd >= 8 {
+            Ok(TiffReader {
+                endianness: header.endianness,
+                buf_reader: buf_reader,
+                offset_to_first_ifd: header.offset_to_first_ifd,
+                subfile_fields_vec: Vec::new()
+            })
+        }
+        else {
+            Err(TiffReadError::ParseError)
         }
     }
     
-    pub fn read_all_ifds(&mut self) -> Result<(), Box<dyn Error>> {
+    pub fn read_all_ifds(&mut self) -> Result<(), TiffReadError> {
         let mut ifd_offset = self.offset_to_first_ifd;
         while ifd_offset != 0 {
             self.buf_reader.seek(std::io::SeekFrom::Start(u64::from(ifd_offset)))?;
@@ -58,44 +52,29 @@ impl<R: Read + Seek> TiffReader<R> {
             let mut ifd_entry_count_buffer = [0u8; 2];
             self.buf_reader.read_exact(&mut ifd_entry_count_buffer)?;
             
-            // compiler cant't infer this type for some reason
-            let ifd_entry_count_parse_result: Result<(&[u8], u16), nom::Err<(&[u8], nom::error::ErrorKind)>> = nom::u16!(&ifd_entry_count_buffer, self.endianness);
+            let ifd_entry_count = nom::u16!(&ifd_entry_count_buffer, self.endianness)?.1;
             
-            match ifd_entry_count_parse_result {
-                Ok((_, ifd_entry_count)) => {
-                    println!("ifd_entry_count: {}", ifd_entry_count);
-                    let mut ifd_buffer: Vec<u8> = vec![0u8; 2 + 12*usize::from(ifd_entry_count) + 4];
-                    self.buf_reader.seek(std::io::SeekFrom::Start(u64::from(ifd_offset)))?;
-                    
-                    self.buf_reader.read_exact(&mut ifd_buffer)?;
-                    let ifd_parse_result = parsers::ifd(&ifd_buffer, self.endianness);
-                    
-                    match ifd_parse_result {
-                        Ok((_, ifd)) => {
-                            println!("Parsed IFD: {:?}", ifd);
-                            let mut fields_map = BTreeMap::new();
-                            for entry in ifd.directory_entries {
-                                let lazy_field_values = parsers::lazy_field_values_from_ifd_entry(&entry, self.endianness);
-                                
-                                fields_map.insert(entry.tag, lazy_field_values);
-                            }
-                            
-                            let subfile_fields = SubfileFields {
-                                fields: fields_map
-                            };
-                            self.subfile_fields_vec.push(subfile_fields);
-                            
-                            ifd_offset = ifd.offset_of_next_ifd;
-                        }
-                        Err(_) => {
-                            return Err(Box::new(TiffReadError))
-                        }
-                    }
-                }
-                Err(_) => {
-                    return Err(Box::new(TiffReadError))
-                }
+            println!("ifd_entry_count: {}", ifd_entry_count);
+            let mut ifd_buffer: Vec<u8> = vec![0u8; 2 + 12*usize::from(ifd_entry_count) + 4];
+            self.buf_reader.seek(std::io::SeekFrom::Start(u64::from(ifd_offset)))?;
+            
+            self.buf_reader.read_exact(&mut ifd_buffer)?;
+            let ifd = parsers::ifd(&ifd_buffer, self.endianness)?.1;
+            
+            println!("Parsed IFD: {:?}", ifd);
+            let mut fields_map = BTreeMap::new();
+            for entry in ifd.directory_entries {
+                let lazy_field_values = parsers::lazy_field_values_from_ifd_entry(&entry, self.endianness);
+                
+                fields_map.insert(entry.tag, lazy_field_values);
             }
+            
+            let subfile_fields = SubfileFields {
+                fields: fields_map
+            };
+            self.subfile_fields_vec.push(subfile_fields);
+            
+            ifd_offset = ifd.offset_of_next_ifd;
         }
         
         Ok(())
@@ -124,7 +103,10 @@ impl<R: Read + Seek> TiffReader<R> {
 }
 
 #[derive(Debug)]
-struct TiffReadError;
+pub enum TiffReadError {
+    IoError(std::io::Error),
+    ParseError, // TODO: add payload
+}
 
 impl fmt::Display for TiffReadError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -132,10 +114,15 @@ impl fmt::Display for TiffReadError {
     }
 }
 
-impl Error for TiffReadError {
-    fn source(&self) -> Option<&(dyn Error + 'static)> {
-        // TODO
-        None
+impl From<std::io::Error> for TiffReadError {
+    fn from(error: std::io::Error) -> Self {
+        TiffReadError::IoError(error)
+    }
+}
+
+impl From<nom::Err<(&[u8], nom::error::ErrorKind)>> for TiffReadError {
+    fn from(error: nom::Err<(&[u8], nom::error::ErrorKind)>) -> Self {
+        TiffReadError::ParseError
     }
 }
 
