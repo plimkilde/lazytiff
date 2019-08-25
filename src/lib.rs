@@ -1,9 +1,8 @@
 #[macro_use]
 extern crate nom;
 use std::collections::BTreeMap;
-use std::io::{Read, Seek, BufRead, BufReader};
+use std::io::{Read, Seek, BufReader};
 use std::fmt;
-use std::error::Error;
 
 mod types;
 mod parsers;
