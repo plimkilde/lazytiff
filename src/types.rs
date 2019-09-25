@@ -1,23 +1,4 @@
-#[derive(Debug)]
-pub struct Header {
-    pub endianness: nom::number::Endianness,
-    pub offset_to_first_ifd: u32
-}
-
-#[derive(Debug)]
-pub struct Ifd {
-    pub num_directory_entries: u16,
-    pub directory_entries: Vec<IfdEntry>,
-    pub offset_of_next_ifd: u32
-}
-
-#[derive(Debug)]
-pub struct IfdEntry {
-    pub tag: u16,
-    pub field_type: u16,
-    pub num_values: u32,
-    pub values_or_offset: [u8; 4]
-}
+use crate::Endianness;
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum FieldType {
@@ -70,20 +51,189 @@ pub struct SRational {
     pub denominator: i32
 }
 
-//TODO: let field types know their own size?
-pub fn estimate_size(field_type: &FieldType, num_values: u32) -> Option<u32> {
+pub fn lazy_field_values_from_ifd_entry(field_type: u16, num_values: u32, values_or_offset: [u8; 4], endianness: Endianness) -> LazyFieldValues {
+    // Used only if the values don't fit in the 4 bytes of the IFD entry.
+    let offset = match endianness {
+        Endianness::Little => u32::from_le_bytes(values_or_offset),
+        Endianness::Big => u32::from_be_bytes(values_or_offset)
+    };
+    
     match field_type {
-        FieldType::Byte => num_values.checked_mul(1),
-        FieldType::Ascii => num_values.checked_mul(1),
-        FieldType::Short => num_values.checked_mul(2),
-        FieldType::Long => num_values.checked_mul(4),
-        FieldType::Rational => num_values.checked_mul(8),
-        FieldType::SByte => num_values.checked_mul(1),
-        FieldType::Undefined => num_values.checked_mul(1),
-        FieldType::SShort => num_values.checked_mul(2),
-        FieldType::SLong => num_values.checked_mul(4),
-        FieldType::SRational => num_values.checked_mul(8),
-        FieldType::Float => num_values.checked_mul(4),
-        FieldType::Double => num_values.checked_mul(8),
+        1 => { // BYTE
+            if num_values <= 4 {
+                LazyFieldValues::Loaded(FieldValues::Byte(values_or_offset[..num_values as usize].to_vec()))
+            }
+            else {
+                LazyFieldValues::NotLoaded {
+                    field_type: FieldType::Byte,
+                    num_values: num_values,
+                    offset: offset
+                }
+            }
+        }
+        2 => { // ASCII
+            if num_values <= 4 {
+                LazyFieldValues::Loaded(FieldValues::Ascii(values_or_offset[..num_values as usize].to_vec()))
+            }
+            else {
+                LazyFieldValues::NotLoaded {
+                    field_type: FieldType::Ascii,
+                    num_values: num_values,
+                    offset: offset
+                }
+            }
+        }
+        3 => { // SHORT
+            if num_values <= 2 {
+                let mut values_vec: Vec<u16> = Vec::new();
+                for i in 0..num_values {
+                    let value_bytes: [u8; 2] = [values_or_offset[2*(i as usize)], values_or_offset[2*(i as usize)+1]];
+                    let value = match endianness {
+                        Endianness::Little => u16::from_le_bytes(value_bytes),
+                        Endianness::Big => u16::from_be_bytes(value_bytes)
+                    };
+                    values_vec.push(value);
+                }
+                LazyFieldValues::Loaded(FieldValues::Short(values_vec))
+            }
+            else
+            {
+                LazyFieldValues::NotLoaded {
+                    field_type: FieldType::Short,
+                    num_values: num_values,
+                    offset: offset
+                }
+            }
+        }
+        4 => { // LONG
+            if num_values <= 1 {
+                let value = match endianness {
+                    Endianness::Little => u32::from_le_bytes(values_or_offset),
+                    Endianness::Big => u32::from_be_bytes(values_or_offset)
+                };
+                let values_vec = vec![value];
+                LazyFieldValues::Loaded(FieldValues::Long(values_vec))
+            }
+            else
+            {
+                LazyFieldValues::NotLoaded {
+                    field_type: FieldType::Long,
+                    num_values: num_values,
+                    offset: offset
+                }
+            }
+        }
+        5 => { // RATIONAL
+            LazyFieldValues::NotLoaded {
+                field_type: FieldType::Rational,
+                num_values: num_values,
+                offset: offset
+            }
+        }
+        6 => { // SBYTE
+            if num_values <= 4 {
+                let mut values_vec: Vec<i8> = Vec::new();
+                for i in 0..num_values as usize {
+                    values_vec.push(values_or_offset[i] as i8);
+                }
+                LazyFieldValues::Loaded(FieldValues::SByte(values_vec))
+            }
+            else {
+                LazyFieldValues::NotLoaded {
+                    field_type: FieldType::SByte,
+                    num_values: num_values,
+                    offset: offset
+                }
+            }
+        }
+        7 => { // UNDEFINED
+            if num_values <= 4 {
+                LazyFieldValues::Loaded(FieldValues::Undefined(values_or_offset[..num_values as usize].to_vec()))
+            }
+            else {
+                LazyFieldValues::NotLoaded {
+                    field_type: FieldType::Undefined,
+                    num_values: num_values,
+                    offset: offset
+                }
+            }
+        }
+        8 => { // SSHORT
+            if num_values <= 2 {
+                let mut values_vec: Vec<i16> = Vec::new();
+                for i in 0..num_values {
+                    let value_bytes: [u8; 2] = [values_or_offset[2*(i as usize)], values_or_offset[2*(i as usize)+1]];
+                    let value = match endianness {
+                        Endianness::Little => i16::from_le_bytes(value_bytes),
+                        Endianness::Big => i16::from_be_bytes(value_bytes)
+                    };
+                    values_vec.push(value);
+                }
+                LazyFieldValues::Loaded(FieldValues::SShort(values_vec))
+            }
+            else
+            {
+                LazyFieldValues::NotLoaded {
+                    field_type: FieldType::SShort,
+                    num_values: num_values,
+                    offset: offset
+                }
+            }
+        }
+        9 => { // SLONG
+            if num_values <= 1 {
+                let value = match endianness {
+                    Endianness::Little => i32::from_le_bytes(values_or_offset),
+                    Endianness::Big => i32::from_be_bytes(values_or_offset)
+                };
+                let values_vec = vec![value];
+                LazyFieldValues::Loaded(FieldValues::SLong(values_vec))
+            }
+            else
+            {
+                LazyFieldValues::NotLoaded {
+                    field_type: FieldType::SLong,
+                    num_values: num_values,
+                    offset: offset
+                }
+            }
+        }
+        10 => { // SRATIONAL
+            LazyFieldValues::NotLoaded {
+                field_type: FieldType::SRational,
+                num_values: num_values,
+                offset: offset
+            }
+        }
+        11 => { // FLOAT
+            if num_values <= 1 {
+                let values_vec = match endianness {
+                    Endianness::Little => vec![f32::from_bits(u32::from_le_bytes(values_or_offset))],
+                    Endianness::Big => vec![f32::from_bits(u32::from_be_bytes(values_or_offset))]
+                };
+                LazyFieldValues::Loaded(FieldValues::Float(values_vec))
+            }
+            else {
+                LazyFieldValues::NotLoaded {
+                    field_type: FieldType::Float,
+                    num_values: num_values,
+                    offset: offset
+                }
+            }
+        }
+        12 => { // DOUBLE
+            LazyFieldValues::NotLoaded {
+                field_type: FieldType::Double,
+                num_values: num_values,
+                offset: offset
+            }
+        }
+        _ => { // Type not specified in TIFF 6.0
+            LazyFieldValues::Unknown {
+                field_type: field_type,
+                num_values: num_values,
+                values_or_offset: values_or_offset
+            }
+        }
     }
 }

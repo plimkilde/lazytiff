@@ -1,18 +1,50 @@
-#[macro_use]
-extern crate nom;
 use std::collections::BTreeMap;
+use std::convert::TryInto;
 use std::io::{Read, Seek, BufReader};
 use std::fmt;
 
 mod types;
-mod parsers;
+
+#[derive(Debug, PartialEq, Clone, Copy)]
+pub enum Endianness {
+    Little,
+    Big,
+}
 
 #[derive(Debug)]
 pub struct TiffReader<R> {
-    endianness: nom::number::Endianness,
+    endianness: Endianness,
     buf_reader: std::io::BufReader<R>,
     offset_to_first_ifd: u32,
     subfile_fields_vec: Vec<SubfileFields>
+}
+
+#[derive(Debug)]
+pub struct Header {
+    pub endianness: Endianness,
+    pub offset_to_first_ifd: u32
+}
+
+impl Header {
+    fn from_bytes(bytes: &[u8; 8]) -> Result<Self, TiffReadError> {
+        let endianness = match &bytes[0..4] {
+            b"II\x2A\x00" => Endianness::Little,
+            b"MM\x00\x2A" => Endianness::Big,
+            _ => return Err(TiffReadError::ParseError)
+        };
+        
+        let offset_bytes: [u8; 4] = bytes[4..8].try_into().unwrap();
+        
+        let offset_to_first_ifd = match endianness {
+            Endianness::Little => u32::from_le_bytes(offset_bytes),
+            Endianness::Big => u32::from_be_bytes(offset_bytes),
+        };
+        
+        Ok(Header {
+            endianness: endianness,
+            offset_to_first_ifd: offset_to_first_ifd, // TODO
+        })
+    }
 }
 
 #[derive(Debug)]
@@ -26,7 +58,7 @@ impl<R: Read + Seek> TiffReader<R> {
         let mut header_bytes = [0u8; 8];
         buf_reader.seek(std::io::SeekFrom::Start(0))?;
         buf_reader.read_exact(&mut header_bytes)?;
-        let header = parsers::header(&header_bytes)?.1;
+        let header = Header::from_bytes(&header_bytes)?;
         
         /* The TIFF 6.0 spec says at least one IFD is mandatory
          * (and that IFD needs to start after the header). */
@@ -48,22 +80,51 @@ impl<R: Read + Seek> TiffReader<R> {
         while ifd_offset != 0 {
             self.buf_reader.seek(std::io::SeekFrom::Start(u64::from(ifd_offset)))?;
             
-            let mut ifd_entry_count_buffer = [0u8; 2];
-            self.buf_reader.read_exact(&mut ifd_entry_count_buffer)?;
+            let mut ifd_entry_count_bytes = [0u8; 2];
+            self.buf_reader.read_exact(&mut ifd_entry_count_bytes)?;
             
-            let ifd_entry_count = nom::u16!(&ifd_entry_count_buffer, self.endianness)?.1;
+            let ifd_entry_count = match self.endianness {
+                Endianness::Little => u16::from_le_bytes(ifd_entry_count_bytes),
+                Endianness::Big => u16::from_be_bytes(ifd_entry_count_bytes),
+            };
             
-            let mut ifd_buffer: Vec<u8> = vec![0u8; 2 + 12*usize::from(ifd_entry_count) + 4];
-            self.buf_reader.seek(std::io::SeekFrom::Start(u64::from(ifd_offset)))?;
+            // TODO: handle overflow
+            let ifd_remaining_buffer_size: usize = 12*usize::from(ifd_entry_count) + 4;
             
-            self.buf_reader.read_exact(&mut ifd_buffer)?;
-            let ifd = parsers::ifd(&ifd_buffer, self.endianness)?.1;
+            let mut ifd_remaining_buffer: Vec<u8> = vec![0u8; ifd_remaining_buffer_size];
+            
+            //self.buf_reader.seek(std::io::SeekFrom::Start(u64::from(ifd_offset)))?;
+            
+            /* Read remainder of the IFD now that we know how many bytes
+             * to read. */
+            self.buf_reader.read_exact(&mut ifd_remaining_buffer)?;
             
             let mut fields_map = BTreeMap::new();
-            for entry in ifd.directory_entries {
-                let lazy_field_values = parsers::lazy_field_values_from_ifd_entry(&entry, self.endianness);
+            for i in 0..usize::from(ifd_entry_count) {
+                let ifd_entry_bytes: [u8; 12] = ifd_remaining_buffer[12*i..12*(i+1)].try_into().unwrap();
                 
-                fields_map.insert(entry.tag, lazy_field_values);
+                let tag_bytes: [u8; 2] = ifd_entry_bytes[0..2].try_into().unwrap();
+                let field_type_bytes: [u8; 2] = ifd_entry_bytes[2..4].try_into().unwrap();
+                let num_values_bytes: [u8; 4] = ifd_entry_bytes[4..8].try_into().unwrap();
+                let values_or_offset_bytes: [u8; 4] = ifd_entry_bytes[8..12].try_into().unwrap();
+                
+                let tag = match self.endianness {
+                    Endianness::Little => u16::from_le_bytes(tag_bytes),
+                    Endianness::Big => u16::from_be_bytes(tag_bytes),
+                };
+                
+                let field_type = match self.endianness {
+                    Endianness::Little => u16::from_le_bytes(field_type_bytes),
+                    Endianness::Big => u16::from_be_bytes(field_type_bytes),
+                };
+                
+                let num_values = match self.endianness {
+                    Endianness::Little => u32::from_le_bytes(num_values_bytes),
+                    Endianness::Big => u32::from_be_bytes(num_values_bytes),
+                };
+                
+                let lazy_field_values = types::lazy_field_values_from_ifd_entry(field_type, num_values, values_or_offset_bytes, self.endianness);
+                fields_map.insert(tag, lazy_field_values);
             }
             
             let subfile_fields = SubfileFields {
@@ -71,31 +132,14 @@ impl<R: Read + Seek> TiffReader<R> {
             };
             self.subfile_fields_vec.push(subfile_fields);
             
-            ifd_offset = ifd.offset_of_next_ifd;
+            let ifd_offset_bytes: [u8; 4] = ifd_remaining_buffer[ifd_remaining_buffer_size-4..].try_into().unwrap();
+            ifd_offset = match self.endianness {
+                Endianness::Little => u32::from_le_bytes(ifd_offset_bytes),
+                Endianness::Big => u32::from_be_bytes(ifd_offset_bytes),
+            };
         }
         
         Ok(())
-    }
-    
-    fn get_subfile_lazy_field(&self, subfile: usize, tag: u16) -> Option<&types::LazyFieldValues> {
-        self.subfile_fields_vec[subfile].fields.get(&tag)
-    }
-    
-    fn get_subfile_field(&mut self, subfile: usize, tag: u16) -> Option<types::FieldValues> {
-        let lazy_result = self.get_subfile_lazy_field(subfile, tag);
-        match lazy_result {
-            Some(types::LazyFieldValues::NotLoaded {field_type, num_values, offset}) => {
-                let read_size = types::estimate_size(field_type, *num_values);
-                let mut read_buffer: Vec<u8> = vec![0u8; read_size.unwrap() as usize]; //FIXME: "as" cast
-                
-                self.buf_reader.seek(std::io::SeekFrom::Start(0)).unwrap();
-                self.buf_reader.read_exact(&mut read_buffer).unwrap();
-                unreachable!() //PLACEHOLDER
-            },
-            Some(types::LazyFieldValues::Loaded(loaded_field_values)) => Some(loaded_field_values.clone()),
-            Some(types::LazyFieldValues::Unknown {field_type, num_values, values_or_offset}) => None,
-            None => None
-        }
     }
 }
 
@@ -117,15 +161,10 @@ impl From<std::io::Error> for TiffReadError {
     }
 }
 
-impl From<nom::Err<(&[u8], nom::error::ErrorKind)>> for TiffReadError {
-    fn from(error: nom::Err<(&[u8], nom::error::ErrorKind)>) -> Self {
-        TiffReadError::ParseError
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use crate::types;
+    use crate::Endianness;
     use std::io::Cursor;
     
     #[test]
@@ -133,7 +172,7 @@ mod tests {
         let header_bytes = b"II\x2A\x00\xD2\x02\x96\x49";
         let mut cursor = Cursor::new(header_bytes);
         let tiff_reader = crate::TiffReader::new(cursor).unwrap();
-        assert_eq!(tiff_reader.endianness, nom::number::Endianness::Little);
+        assert_eq!(tiff_reader.endianness, Endianness::Little);
         assert_eq!(tiff_reader.offset_to_first_ifd, 1234567890u32);
         println!("{:#?}", tiff_reader);
     }
@@ -143,7 +182,7 @@ mod tests {
         let header_bytes = b"MM\x00\x2A\x49\x96\x02\xD2";
         let mut cursor = Cursor::new(header_bytes);
         let tiff_reader = crate::TiffReader::new(cursor).unwrap();
-        assert_eq!(tiff_reader.endianness, nom::number::Endianness::Big);
+        assert_eq!(tiff_reader.endianness, Endianness::Big);
         assert_eq!(tiff_reader.offset_to_first_ifd, 1234567890u32);
         println!("{:#?}", tiff_reader);
     }
@@ -191,7 +230,7 @@ mod tests {
         let mut cursor = Cursor::new(tiff_bytes);
         let mut tiff_reader = crate::TiffReader::new(cursor).unwrap();
         println!("{:#?}", tiff_reader);
-        assert_eq!(tiff_reader.endianness, nom::number::Endianness::Little);
+        assert_eq!(tiff_reader.endianness, Endianness::Little);
         assert_eq!(tiff_reader.offset_to_first_ifd, 13);
         tiff_reader.read_all_ifds().unwrap();
         assert_eq!(tiff_reader.subfile_fields_vec.len(), 1);

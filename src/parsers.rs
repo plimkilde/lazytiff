@@ -1,6 +1,3 @@
-use nom::number::streaming::{le_u32, le_i32};
-use nom::number::streaming::{be_u32, be_i32};
-
 use crate::types;
 use crate::types::{FieldType, FieldValues, LazyFieldValues};
 
