@@ -42,7 +42,7 @@ impl Header {
         
         Ok(Header {
             endianness: endianness,
-            offset_to_first_ifd: offset_to_first_ifd, // TODO
+            offset_to_first_ifd: offset_to_first_ifd,
         })
     }
 }
