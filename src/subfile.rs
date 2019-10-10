@@ -18,6 +18,37 @@ pub enum FieldState {
     Unknown {field_type: u16, num_values: u32, values_or_offset: [u8; 4]},
 }
 
+impl FieldState {
+    fn from_ifd_entry_lazy(field_type_raw: u16, count: u32, values_or_offset: [u8; 4], endianness: Endianness) -> Result<FieldState, TiffReadError> {
+        match type_from_u16(field_type_raw) {
+            None => Ok(Unknown {field_type: field_type_raw, num_values: count, values_or_offset: values_or_offset}),
+            Some(field_type) => {
+                // TODO: new overflow error type?
+                let required_buffer_size = compute_values_buffer_size(field_type, count).ok_or(ParseError)?;
+                
+                if required_buffer_size <= 4 {
+                    /* The value(s) fit in the IFD entry, load them
+                     * right away. */
+                    let values_buffer = values_or_offset[..required_buffer_size].to_vec();
+                    
+                    let values = values_from_buffer(field_type, count, &values_buffer, endianness)?;
+                    
+                    Ok(Loaded(values))
+                } else {
+                    /* The value(s) did not fit in the IFD entry, skip
+                     * loading data for now. */
+                    let offset = match endianness {
+                        Endianness::Little => u32::from_le_bytes(values_or_offset),
+                        Endianness::Big => u32::from_be_bytes(values_or_offset),
+                    };
+                    
+                    Ok(NotLoaded {field_type: field_type, num_values: count, offset: offset})
+                }
+            },
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct Subfile<R> {
     buf_reader_ref: Arc<Mutex<BufReader<R>>>,
@@ -83,7 +114,7 @@ impl<R: Read + Seek> Subfile<R> {
                 }
             }
             
-            let field_state = Self::get_lazy_field_state(field_type_raw, value_count, values_or_offset_bytes, endianness)?;
+            let field_state = FieldState::from_ifd_entry_lazy(field_type_raw, value_count, values_or_offset_bytes, endianness)?;
             fields_map.insert(tag, field_state);
         }
         
@@ -122,36 +153,6 @@ impl<R: Read + Seek> Subfile<R> {
                 }
             }
             None => None,
-        }
-    }
-    
-    // TODO: should be method of FieldState
-    fn get_lazy_field_state(field_type_raw: u16, count: u32, values_or_offset: [u8; 4], endianness: Endianness) -> Result<FieldState, TiffReadError> {
-        match type_from_u16(field_type_raw) {
-            None => Ok(Unknown {field_type: field_type_raw, num_values: count, values_or_offset: values_or_offset}),
-            Some(field_type) => {
-                // TODO: new overflow error type?
-                let required_buffer_size = compute_values_buffer_size(field_type, count).ok_or(ParseError)?;
-                
-                if required_buffer_size <= 4 {
-                    /* The value(s) fit in the IFD entry, load them
-                     * right away. */
-                    let values_buffer = values_or_offset[..required_buffer_size].to_vec();
-                    
-                    let values = values_from_buffer(field_type, count, &values_buffer, endianness)?;
-                    
-                    Ok(Loaded(values))
-                } else {
-                    /* The value(s) did not fit in the IFD entry, skip
-                     * loading data for now. */
-                    let offset = match endianness {
-                        Endianness::Little => u32::from_le_bytes(values_or_offset),
-                        Endianness::Big => u32::from_be_bytes(values_or_offset),
-                    };
-                    
-                    Ok(NotLoaded {field_type: field_type, num_values: count, offset: offset})
-                }
-            },
         }
     }
 }
