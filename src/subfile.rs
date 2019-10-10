@@ -63,25 +63,27 @@ impl<R: Read + Seek> Subfile<R> {
             
             let tag_bytes: [u8; 2] = ifd_entry_bytes[0..2].try_into().unwrap();
             let field_type_bytes: [u8; 2] = ifd_entry_bytes[2..4].try_into().unwrap();
-            let num_values_bytes: [u8; 4] = ifd_entry_bytes[4..8].try_into().unwrap();
+            let value_count_bytes: [u8; 4] = ifd_entry_bytes[4..8].try_into().unwrap();
             let values_or_offset_bytes: [u8; 4] = ifd_entry_bytes[8..12].try_into().unwrap();
             
-            let tag = match endianness {
-                Endianness::Little => u16::from_le_bytes(tag_bytes),
-                Endianness::Big => u16::from_be_bytes(tag_bytes),
-            };
+            let tag: u16;
+            let field_type_raw: u16;
+            let value_count: u32;
             
-            let field_type = match endianness {
-                Endianness::Little => u16::from_le_bytes(field_type_bytes),
-                Endianness::Big => u16::from_be_bytes(field_type_bytes),
-            };
+            match endianness {
+                Endianness::Little => {
+                    tag = u16::from_le_bytes(tag_bytes);
+                    field_type_raw = u16::from_le_bytes(field_type_bytes);
+                    value_count = u32::from_le_bytes(value_count_bytes);
+                }
+                Endianness::Big => {
+                    tag = u16::from_be_bytes(tag_bytes);
+                    field_type_raw = u16::from_be_bytes(field_type_bytes);
+                    value_count = u32::from_be_bytes(value_count_bytes);
+                }
+            }
             
-            let num_values = match endianness {
-                Endianness::Little => u32::from_le_bytes(num_values_bytes),
-                Endianness::Big => u32::from_be_bytes(num_values_bytes),
-            };
-            
-            let field_state = Self::get_lazy_field_state(field_type, num_values, values_or_offset_bytes, endianness)?;
+            let field_state = Self::get_lazy_field_state(field_type_raw, value_count, values_or_offset_bytes, endianness)?;
             fields_map.insert(tag, field_state);
         }
         

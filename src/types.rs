@@ -1,9 +1,6 @@
 use std::convert::{TryFrom, TryInto};
 use std::slice::ChunksExact;
 
-//TODO: remove
-use crate::subfile::FieldState;
-
 use crate::error::TiffReadError;
 
 use FieldType::*;
