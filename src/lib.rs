@@ -91,7 +91,7 @@ mod tests {
     #[test]
     fn create_tiff_reader_from_le_header() {
         let header_bytes = b"II\x2A\x00\xD2\x02\x96\x49";
-        let mut cursor = Cursor::new(header_bytes);
+        let cursor = Cursor::new(header_bytes);
         let tiff_reader = crate::TiffReader::new(cursor).unwrap();
         assert_eq!(tiff_reader.endianness, Endianness::Little);
         assert_eq!(tiff_reader.offset_to_first_ifd, 1234567890u32);
@@ -101,7 +101,7 @@ mod tests {
     #[test]
     fn create_tiff_reader_from_be_header() {
         let header_bytes = b"MM\x00\x2A\x49\x96\x02\xD2";
-        let mut cursor = Cursor::new(header_bytes);
+        let cursor = Cursor::new(header_bytes);
         let tiff_reader = crate::TiffReader::new(cursor).unwrap();
         assert_eq!(tiff_reader.endianness, Endianness::Big);
         assert_eq!(tiff_reader.offset_to_first_ifd, 1234567890u32);
@@ -112,7 +112,7 @@ mod tests {
     #[should_panic]
     fn fail_create_tiff_reader_with_first_offset_too_low() {
         let header_bytes = b"II\x2A\x00\x00\x00\x00\x00";
-        let mut cursor = Cursor::new(header_bytes);
+        let cursor = Cursor::new(header_bytes);
         let tiff_reader = crate::TiffReader::new(cursor).unwrap();
         println!("{:#?}", tiff_reader); //should not be reachable
     }
@@ -121,7 +121,7 @@ mod tests {
     #[should_panic]
     fn fail_create_tiff_reader_from_incomplete_header() {
         let header_bytes = b"II\x2A\x00";
-        let mut cursor = Cursor::new(header_bytes);
+        let cursor = Cursor::new(header_bytes);
         let tiff_reader = crate::TiffReader::new(cursor).unwrap();
         println!("{:#?}", tiff_reader); //should not be reachable
     }
@@ -130,7 +130,7 @@ mod tests {
     #[should_panic]
     fn fail_create_tiff_reader_from_invalid_data() {
         let header_bytes = b"Hello, World!";
-        let mut cursor = Cursor::new(header_bytes);
+        let cursor = Cursor::new(header_bytes);
         let tiff_reader = crate::TiffReader::new(cursor).unwrap();
         println!("{:#?}", tiff_reader); //should not be reachable
     }
@@ -147,7 +147,7 @@ mod tests {
             b"\xCA\xFE\xBE\xEF".as_ref(), // IFD entry: values (3 bytes: 202, 254, 190)
             b"\x00\x00\x00\x00".as_ref() // IFD: offset to next IFD (0 = N/A)
         ].concat();
-        let mut cursor = Cursor::new(tiff_bytes);
+        let cursor = Cursor::new(tiff_bytes);
         let mut tiff_reader = crate::TiffReader::new(cursor).unwrap();
         println!("{:#?}", tiff_reader);
         assert_eq!(tiff_reader.endianness, Endianness::Little);
