@@ -22,7 +22,7 @@ pub enum FieldState {
 pub struct Subfile<R> {
     buf_reader_ref: Arc<Mutex<BufReader<R>>>,
     endianness: Endianness,
-    pub fields: BTreeMap<u16, FieldState>,
+    fields: BTreeMap<u16, FieldState>,
     offset_to_next_ifd: Option<u32>,
 }
 
@@ -109,6 +109,20 @@ impl<R: Read + Seek> Subfile<R> {
     
     pub fn offset_to_next_ifd(&self) -> Option<u32> {
         self.offset_to_next_ifd
+    }
+    
+    /// Returns a `FieldValues` reference if the field values fit into
+    /// the 4 bytes in the IFD. Will not trigger I/O operations.
+    pub fn get_ifd_field_values(&self, tag: u16) -> Option<&FieldValues> {
+        match self.fields.get(&tag) {
+            Some(field_state) => {
+                match field_state {
+                    FieldState::Loaded(values) => Some(values),
+                    _ => None,
+                }
+            }
+            None => None,
+        }
     }
     
     // TODO: should be method of FieldState

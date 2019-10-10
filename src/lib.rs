@@ -84,7 +84,6 @@ impl<R: Read + Seek> TiffReader<R> {
 #[cfg(test)]
 mod tests {
     use crate::types;
-    use crate::subfile::FieldState::*;
     use crate::Endianness;
     use std::io::Cursor;
     
@@ -154,10 +153,10 @@ mod tests {
         assert_eq!(tiff_reader.offset_to_first_ifd, 13);
         tiff_reader.read_all_ifds().unwrap();
         assert_eq!(tiff_reader.subfiles.len(), 1);
-        assert!(tiff_reader.subfiles[0].fields.contains_key(&1337));
+        //assert!(tiff_reader.subfiles[0].fields.contains_key(&1337));
         assert_eq!(
-            tiff_reader.subfiles[0].fields.get(&1337).unwrap(),
-            &Loaded(types::FieldValues::Byte(vec![202, 254, 190]))
+            tiff_reader.subfiles[0].get_ifd_field_values(1337).unwrap(),
+            &types::FieldValues::Byte(vec![202, 254, 190])
         );
         println!("{:#?}", tiff_reader);
     }
