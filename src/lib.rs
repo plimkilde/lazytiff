@@ -2,7 +2,7 @@ use std::convert::TryInto;
 use std::io::{Read, Seek, BufReader};
 use std::sync::{Arc, Mutex};
 
-use types::{Endianness, FieldState};
+use types::Endianness;
 use subfile::Subfile;
 use error::TiffReadError;
 
@@ -84,6 +84,7 @@ impl<R: Read + Seek> TiffReader<R> {
 #[cfg(test)]
 mod tests {
     use crate::types;
+    use crate::subfile::FieldState::*;
     use crate::Endianness;
     use std::io::Cursor;
     
@@ -156,7 +157,7 @@ mod tests {
         assert!(tiff_reader.subfiles[0].fields.contains_key(&1337));
         assert_eq!(
             tiff_reader.subfiles[0].fields.get(&1337).unwrap(),
-            &types::FieldState::Loaded(types::FieldValues::Byte(vec![202, 254, 190]))
+            &Loaded(types::FieldValues::Byte(vec![202, 254, 190]))
         );
         println!("{:#?}", tiff_reader);
     }

@@ -1,10 +1,20 @@
+use std::convert::{TryFrom, TryInto};
+use std::slice::ChunksExact;
+
+//TODO: remove
+use crate::subfile::FieldState;
+
+use crate::error::TiffReadError;
+
+use FieldType::*;
+
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub enum Endianness {
     Little,
     Big,
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 pub enum FieldType {
     Byte,      //  1
     Ascii,     //  2
@@ -18,6 +28,41 @@ pub enum FieldType {
     SRational, // 10
     Float,     // 11
     Double,    // 12
+}
+
+pub fn type_from_u16(field_type_raw: u16) -> Option<FieldType> {
+    match field_type_raw {
+        1 => Some(Byte),
+        2 => Some(Ascii),
+        3 => Some(Short),
+        4 => Some(Long),
+        5 => Some(Rational),
+        6 => Some(SByte),
+        7 => Some(Undefined),
+        8 => Some(SShort),
+        9 => Some(SLong),
+        10 => Some(SRational),
+        11 => Some(Float),
+        12 => Some(Double),
+        _ => None,
+    }
+}
+
+pub fn size_of_type(field_type: FieldType) -> usize {
+    match field_type {
+        Byte => 1,
+        Ascii => 1,
+        Short => 2,
+        Long => 4,
+        Rational => 8,
+        SByte => 1,
+        Undefined => 1,
+        SShort => 2,
+        SLong => 4,
+        SRational => 8,
+        Float => 4,
+        Double => 8,
+    }
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -37,208 +82,158 @@ pub enum FieldValues {
 }
 
 #[derive(Debug, PartialEq, Clone)]
-pub enum FieldState {
-    //Loaded {FieldValues, offset_opt: Option<u32>}, // TODO
-    Loaded(FieldValues),
-    NotLoaded {field_type: FieldType, num_values: u32, offset: u32},
-    Unknown {field_type: u16, num_values: u32, values_or_offset: [u8; 4]},
-}
-
-#[derive(Debug, PartialEq, Clone)]
 pub struct Rational {
     pub numerator: u32,
-    pub denominator: u32
+    pub denominator: u32,
 }
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct SRational {
     pub numerator: i32,
-    pub denominator: i32
+    pub denominator: i32,
 }
 
-pub fn lazy_field_values_from_ifd_entry(field_type: u16, num_values: u32, values_or_offset: [u8; 4], endianness: Endianness) -> FieldState {
-    // Used only if the values don't fit in the 4 bytes of the IFD entry.
-    let offset = match endianness {
-        Endianness::Little => u32::from_le_bytes(values_or_offset),
-        Endianness::Big => u32::from_be_bytes(values_or_offset)
-    };
+impl Rational {
+    fn from_le_bytes(bytes: [u8; 8]) -> Self {
+        let numerator = u32::from_le_bytes(bytes[0..4].try_into().unwrap());
+        let denominator = u32::from_le_bytes(bytes[4..8].try_into().unwrap());
+        Rational {
+            numerator: numerator,
+            denominator: denominator,
+        }
+    }
     
+    fn from_be_bytes(bytes: [u8; 8]) -> Self {
+        let numerator = u32::from_be_bytes(bytes[0..4].try_into().unwrap());
+        let denominator = u32::from_be_bytes(bytes[4..8].try_into().unwrap());
+        Rational {
+            numerator: numerator,
+            denominator: denominator,
+        }
+    }
+}
+
+impl SRational {
+    fn from_le_bytes(bytes: [u8; 8]) -> Self {
+        let numerator = i32::from_le_bytes(bytes[0..4].try_into().unwrap());
+        let denominator = i32::from_le_bytes(bytes[4..8].try_into().unwrap());
+        SRational {
+            numerator: numerator,
+            denominator: denominator,
+        }
+    }
+    
+    fn from_be_bytes(bytes: [u8; 8]) -> Self {
+        let numerator = i32::from_be_bytes(bytes[0..4].try_into().unwrap());
+        let denominator = i32::from_be_bytes(bytes[4..8].try_into().unwrap());
+        SRational {
+            numerator: numerator,
+            denominator: denominator,
+        }
+    }
+}
+
+pub fn compute_values_buffer_size(field_type: FieldType, count: u32) -> Option<usize> {
+    let element_size = size_of_type(field_type);
+    
+    /* Return buffer size if `count` fits in a usize and the
+     * multiplication doesn't overflow. */
+    match usize::try_from(count) {
+        Ok(count_usize) => element_size.checked_mul(count_usize),
+        Err(_) => None,
+    }
+}
+
+pub fn values_from_buffer(field_type: FieldType, count: u32, buffer: &[u8], endianness: Endianness) -> Result<FieldValues, TiffReadError> {
+    let count_usize = match usize::try_from(count) {
+        Ok(count_usize) => count_usize,
+        Err(_) => return Err(TiffReadError::ParseError),
+    };
+    let type_size = size_of_type(field_type);
+    let correct_buffer_size = compute_values_buffer_size(field_type, count).ok_or(TiffReadError::ParseError)?;
+    
+    if buffer.len() == correct_buffer_size {
+        let buffer_chunks = buffer.chunks_exact(type_size);
+        
+        let values = values_from_chunks(field_type, buffer_chunks, endianness);
+        
+        Ok(values)
+    } else {
+        Err(TiffReadError::ParseError)
+    }
+}
+
+fn values_from_chunks(field_type: FieldType, chunks: ChunksExact<u8>, endianness: Endianness) -> FieldValues {
+    /* The BYTE, ASCII, SBYTE and UNDEFINED data types are not endian-
+     * sensitive. */
     match field_type {
-        1 => { // BYTE
-            if num_values <= 4 {
-                FieldState::Loaded(FieldValues::Byte(values_or_offset[..num_values as usize].to_vec()))
-            }
-            else {
-                FieldState::NotLoaded {
-                    field_type: FieldType::Byte,
-                    num_values: num_values,
-                    offset: offset
-                }
-            }
+        Byte => FieldValues::Byte(chunks.map(|chunk| chunk[0]).collect()),
+        Ascii => FieldValues::Ascii(chunks.map(|chunk| chunk[0]).collect()),
+        Short => {
+            let values_iter: Box<dyn Iterator<Item = u16>> = match endianness {
+                Endianness::Little => Box::new(chunks.map(|chunk_bytes| u16::from_le_bytes(chunk_bytes.try_into().unwrap()))),
+                Endianness::Big => Box::new(chunks.map(|chunk_bytes| u16::from_be_bytes(chunk_bytes.try_into().unwrap()))),
+            };
+            
+            FieldValues::Short(values_iter.collect())
         }
-        2 => { // ASCII
-            if num_values <= 4 {
-                FieldState::Loaded(FieldValues::Ascii(values_or_offset[..num_values as usize].to_vec()))
-            }
-            else {
-                FieldState::NotLoaded {
-                    field_type: FieldType::Ascii,
-                    num_values: num_values,
-                    offset: offset
-                }
-            }
+        Long => {
+            let values_iter: Box<dyn Iterator<Item = u32>> = match endianness {
+                Endianness::Little => Box::new(chunks.map(|chunk_bytes| u32::from_le_bytes(chunk_bytes.try_into().unwrap()))),
+                Endianness::Big => Box::new(chunks.map(|chunk_bytes| u32::from_be_bytes(chunk_bytes.try_into().unwrap()))),
+            };
+            
+            FieldValues::Long(values_iter.collect())
         }
-        3 => { // SHORT
-            if num_values <= 2 {
-                let mut values_vec: Vec<u16> = Vec::new();
-                for i in 0..num_values {
-                    let value_bytes: [u8; 2] = [values_or_offset[2*(i as usize)], values_or_offset[2*(i as usize)+1]];
-                    let value = match endianness {
-                        Endianness::Little => u16::from_le_bytes(value_bytes),
-                        Endianness::Big => u16::from_be_bytes(value_bytes)
-                    };
-                    values_vec.push(value);
-                }
-                FieldState::Loaded(FieldValues::Short(values_vec))
-            }
-            else
-            {
-                FieldState::NotLoaded {
-                    field_type: FieldType::Short,
-                    num_values: num_values,
-                    offset: offset
-                }
-            }
+        Rational => {
+            let values_iter: Box<dyn Iterator<Item = Rational>> = match endianness {
+                Endianness::Little => Box::new(chunks.map(|chunk_bytes| Rational::from_le_bytes(chunk_bytes.try_into().unwrap()))),
+                Endianness::Big => Box::new(chunks.map(|chunk_bytes| Rational::from_be_bytes(chunk_bytes.try_into().unwrap()))),
+            };
+            
+            FieldValues::Rational(values_iter.collect())
         }
-        4 => { // LONG
-            if num_values <= 1 {
-                let value = match endianness {
-                    Endianness::Little => u32::from_le_bytes(values_or_offset),
-                    Endianness::Big => u32::from_be_bytes(values_or_offset)
-                };
-                let values_vec = vec![value];
-                FieldState::Loaded(FieldValues::Long(values_vec))
-            }
-            else
-            {
-                FieldState::NotLoaded {
-                    field_type: FieldType::Long,
-                    num_values: num_values,
-                    offset: offset
-                }
-            }
+        SByte => FieldValues::SByte(chunks.map(|chunk| chunk[0] as i8).collect()),
+        Undefined => FieldValues::Undefined(chunks.map(|chunk| chunk[0]).collect()),
+        SShort => {
+            let values_iter: Box<dyn Iterator<Item = i16>> = match endianness {
+                Endianness::Little => Box::new(chunks.map(|chunk_bytes| i16::from_le_bytes(chunk_bytes.try_into().unwrap()))),
+                Endianness::Big => Box::new(chunks.map(|chunk_bytes| i16::from_be_bytes(chunk_bytes.try_into().unwrap()))),
+            };
+            
+            FieldValues::SShort(values_iter.collect())
         }
-        5 => { // RATIONAL
-            FieldState::NotLoaded {
-                field_type: FieldType::Rational,
-                num_values: num_values,
-                offset: offset
-            }
+        SLong => {
+            let values_iter: Box<dyn Iterator<Item = i32>> = match endianness {
+                Endianness::Little => Box::new(chunks.map(|chunk_bytes| i32::from_le_bytes(chunk_bytes.try_into().unwrap()))),
+                Endianness::Big => Box::new(chunks.map(|chunk_bytes| i32::from_be_bytes(chunk_bytes.try_into().unwrap()))),
+            };
+            
+            FieldValues::SLong(values_iter.collect())
         }
-        6 => { // SBYTE
-            if num_values <= 4 {
-                let mut values_vec: Vec<i8> = Vec::new();
-                for i in 0..num_values as usize {
-                    values_vec.push(values_or_offset[i] as i8);
-                }
-                FieldState::Loaded(FieldValues::SByte(values_vec))
-            }
-            else {
-                FieldState::NotLoaded {
-                    field_type: FieldType::SByte,
-                    num_values: num_values,
-                    offset: offset
-                }
-            }
+        SRational => {
+            let values_iter: Box<dyn Iterator<Item = SRational>> = match endianness {
+                Endianness::Little => Box::new(chunks.map(|chunk_bytes| SRational::from_le_bytes(chunk_bytes.try_into().unwrap()))),
+                Endianness::Big => Box::new(chunks.map(|chunk_bytes| SRational::from_be_bytes(chunk_bytes.try_into().unwrap()))),
+            };
+            
+            FieldValues::SRational(values_iter.collect())
         }
-        7 => { // UNDEFINED
-            if num_values <= 4 {
-                FieldState::Loaded(FieldValues::Undefined(values_or_offset[..num_values as usize].to_vec()))
-            }
-            else {
-                FieldState::NotLoaded {
-                    field_type: FieldType::Undefined,
-                    num_values: num_values,
-                    offset: offset
-                }
-            }
+        Float => {
+            let values_iter: Box<dyn Iterator<Item = f32>> = match endianness {
+                Endianness::Little => Box::new(chunks.map(|chunk_bytes| f32::from_bits(u32::from_le_bytes(chunk_bytes.try_into().unwrap())))),
+                Endianness::Big => Box::new(chunks.map(|chunk_bytes| f32::from_bits(u32::from_be_bytes(chunk_bytes.try_into().unwrap())))),
+            };
+            
+            FieldValues::Float(values_iter.collect())
         }
-        8 => { // SSHORT
-            if num_values <= 2 {
-                let mut values_vec: Vec<i16> = Vec::new();
-                for i in 0..num_values {
-                    let value_bytes: [u8; 2] = [values_or_offset[2*(i as usize)], values_or_offset[2*(i as usize)+1]];
-                    let value = match endianness {
-                        Endianness::Little => i16::from_le_bytes(value_bytes),
-                        Endianness::Big => i16::from_be_bytes(value_bytes)
-                    };
-                    values_vec.push(value);
-                }
-                FieldState::Loaded(FieldValues::SShort(values_vec))
-            }
-            else
-            {
-                FieldState::NotLoaded {
-                    field_type: FieldType::SShort,
-                    num_values: num_values,
-                    offset: offset
-                }
-            }
-        }
-        9 => { // SLONG
-            if num_values <= 1 {
-                let value = match endianness {
-                    Endianness::Little => i32::from_le_bytes(values_or_offset),
-                    Endianness::Big => i32::from_be_bytes(values_or_offset)
-                };
-                let values_vec = vec![value];
-                FieldState::Loaded(FieldValues::SLong(values_vec))
-            }
-            else
-            {
-                FieldState::NotLoaded {
-                    field_type: FieldType::SLong,
-                    num_values: num_values,
-                    offset: offset
-                }
-            }
-        }
-        10 => { // SRATIONAL
-            FieldState::NotLoaded {
-                field_type: FieldType::SRational,
-                num_values: num_values,
-                offset: offset
-            }
-        }
-        11 => { // FLOAT
-            if num_values <= 1 {
-                let values_vec = match endianness {
-                    Endianness::Little => vec![f32::from_bits(u32::from_le_bytes(values_or_offset))],
-                    Endianness::Big => vec![f32::from_bits(u32::from_be_bytes(values_or_offset))]
-                };
-                FieldState::Loaded(FieldValues::Float(values_vec))
-            }
-            else {
-                FieldState::NotLoaded {
-                    field_type: FieldType::Float,
-                    num_values: num_values,
-                    offset: offset
-                }
-            }
-        }
-        12 => { // DOUBLE
-            FieldState::NotLoaded {
-                field_type: FieldType::Double,
-                num_values: num_values,
-                offset: offset
-            }
-        }
-        _ => { // Type not specified in TIFF 6.0
-            FieldState::Unknown {
-                field_type: field_type,
-                num_values: num_values,
-                values_or_offset: values_or_offset
-            }
+        Double => {
+            let values_iter: Box<dyn Iterator<Item = f64>> = match endianness {
+                Endianness::Little => Box::new(chunks.map(|chunk_bytes| f64::from_bits(u64::from_le_bytes(chunk_bytes.try_into().unwrap())))),
+                Endianness::Big => Box::new(chunks.map(|chunk_bytes| f64::from_bits(u64::from_be_bytes(chunk_bytes.try_into().unwrap())))),
+            };
+            
+            FieldValues::Double(values_iter.collect())
         }
     }
 }

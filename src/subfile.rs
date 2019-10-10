@@ -1,11 +1,22 @@
 use std::collections::BTreeMap;
-use std::convert::{TryFrom, TryInto};
+use std::convert::TryInto;
 use std::io::{Read, Seek, BufReader};
 use std::sync::{Arc, Mutex};
 
 use crate::types::*;
 use crate::types::FieldType::*;
 use crate::error::TiffReadError;
+use crate::error::TiffReadError::*;
+
+use FieldState::*;
+
+#[derive(Debug, PartialEq, Clone)]
+pub enum FieldState {
+    //Loaded {FieldValues, offset_opt: Option<u32>}, // TODO
+    Loaded(FieldValues),
+    NotLoaded {field_type: FieldType, num_values: u32, offset: u32},
+    Unknown {field_type: u16, num_values: u32, values_or_offset: [u8; 4]},
+}
 
 #[derive(Debug)]
 pub struct Subfile<R> {
@@ -70,8 +81,8 @@ impl<R: Read + Seek> Subfile<R> {
                 Endianness::Big => u32::from_be_bytes(num_values_bytes),
             };
             
-            let lazy_field_values = lazy_field_values_from_ifd_entry(field_type, num_values, values_or_offset_bytes, endianness);
-            fields_map.insert(tag, lazy_field_values);
+            let field_state = Self::get_lazy_field_state(field_type, num_values, values_or_offset_bytes, endianness)?;
+            fields_map.insert(tag, field_state);
         }
         
         let ifd_offset_bytes: [u8; 4] = ifd_remaining_buffer[ifd_remaining_buffer_size-4..].try_into().unwrap();
@@ -98,27 +109,33 @@ impl<R: Read + Seek> Subfile<R> {
         self.offset_to_next_ifd
     }
     
-    fn get_field_buffer_size(field_type: FieldType, count: u32) -> Option<usize> {
-        let element_size: usize = match field_type {
-            Byte => 1,
-            Ascii => 1,
-            Short => 2,
-            Long => 4,
-            Rational => 8,
-            SByte => 1,
-            Undefined => 1,
-            SShort => 2,
-            SLong => 4,
-            SRational => 8,
-            Float => 4,
-            Double => 8,
-        };
-        
-        /* Return buffer size if `count` fits in a usize and the
-         * multiplication doesn't overflow. */
-        match usize::try_from(count) {
-            Ok(count_usize) => element_size.checked_mul(count_usize),
-            Err(_) => None,
+    // TODO: should be method of FieldState
+    fn get_lazy_field_state(field_type_raw: u16, count: u32, values_or_offset: [u8; 4], endianness: Endianness) -> Result<FieldState, TiffReadError> {
+        match type_from_u16(field_type_raw) {
+            None => Ok(Unknown {field_type: field_type_raw, num_values: count, values_or_offset: values_or_offset}),
+            Some(field_type) => {
+                // TODO: new overflow error type?
+                let required_buffer_size = compute_values_buffer_size(field_type, count).ok_or(ParseError)?;
+                
+                if required_buffer_size <= 4 {
+                    /* The value(s) fit in the IFD entry, load them
+                     * right away. */
+                    let values_buffer = values_or_offset[..required_buffer_size].to_vec();
+                    
+                    let values = values_from_buffer(field_type, count, &values_buffer, endianness)?;
+                    
+                    Ok(Loaded(values))
+                } else {
+                    /* The value(s) did not fit in the IFD entry, skip
+                     * loading data for now. */
+                    let offset = match endianness {
+                        Endianness::Little => u32::from_le_bytes(values_or_offset),
+                        Endianness::Big => u32::from_be_bytes(values_or_offset),
+                    };
+                    
+                    Ok(NotLoaded {field_type: field_type, num_values: count, offset: offset})
+                }
+            },
         }
     }
 }
