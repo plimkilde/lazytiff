@@ -12,37 +12,37 @@ use FieldState::*;
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum FieldState {
-    //Loaded {FieldValues, offset_opt: Option<u32>}, // TODO
-    Loaded(FieldValues),
-    NotLoaded {field_type: FieldType, num_values: u32, offset: u32},
-    Unknown {field_type: u16, num_values: u32, values_or_offset: [u8; 4]},
+    //Loaded {FieldValue, offset_opt: Option<u32>}, // TODO
+    Loaded(FieldValue),
+    NotLoaded {field_type: FieldType, count: u32, offset: u32},
+    Unknown {field_type_raw: u16, count: u32, value_offset_bytes: [u8; 4]},
 }
 
 impl FieldState {
-    fn from_ifd_entry_lazy(field_type_raw: u16, count: u32, values_or_offset: [u8; 4], endianness: Endianness) -> Result<FieldState, TiffReadError> {
+    fn from_ifd_entry_lazy(field_type_raw: u16, count: u32, value_offset_bytes: [u8; 4], endianness: Endianness) -> Result<FieldState, TiffReadError> {
         match type_from_u16(field_type_raw) {
-            None => Ok(Unknown {field_type: field_type_raw, num_values: count, values_or_offset: values_or_offset}),
+            None => Ok(Unknown {field_type_raw: field_type_raw, count: count, value_offset_bytes: value_offset_bytes}),
             Some(field_type) => {
                 // TODO: new overflow error type?
-                let required_buffer_size = compute_values_buffer_size(field_type, count).ok_or(ParseError)?;
+                let required_buffer_size = compute_value_buffer_size(field_type, count).ok_or(ParseError)?;
                 
                 if required_buffer_size <= 4 {
                     /* The value(s) fit in the IFD entry, load them
                      * right away. */
-                    let values_buffer = values_or_offset[..required_buffer_size].to_vec();
+                    let value_buffer = value_offset_bytes[..required_buffer_size].to_vec();
                     
-                    let values = values_from_buffer(field_type, count, &values_buffer, endianness)?;
+                    let value = value_from_buffer(field_type, count, &value_buffer, endianness)?;
                     
-                    Ok(Loaded(values))
+                    Ok(Loaded(value))
                 } else {
                     /* The value(s) did not fit in the IFD entry, skip
                      * loading data for now. */
                     let offset = match endianness {
-                        Endianness::Little => u32::from_le_bytes(values_or_offset),
-                        Endianness::Big => u32::from_be_bytes(values_or_offset),
+                        Endianness::Little => u32::from_le_bytes(value_offset_bytes),
+                        Endianness::Big => u32::from_be_bytes(value_offset_bytes),
                     };
                     
-                    Ok(NotLoaded {field_type: field_type, num_values: count, offset: offset})
+                    Ok(NotLoaded {field_type: field_type, count: count, offset: offset})
                 }
             },
         }
@@ -94,38 +94,38 @@ impl<R: Read + Seek> Subfile<R> {
             
             let tag_bytes: [u8; 2] = ifd_entry_bytes[0..2].try_into().unwrap();
             let field_type_bytes: [u8; 2] = ifd_entry_bytes[2..4].try_into().unwrap();
-            let value_count_bytes: [u8; 4] = ifd_entry_bytes[4..8].try_into().unwrap();
-            let values_or_offset_bytes: [u8; 4] = ifd_entry_bytes[8..12].try_into().unwrap();
+            let count_bytes: [u8; 4] = ifd_entry_bytes[4..8].try_into().unwrap();
+            let value_offset_bytes: [u8; 4] = ifd_entry_bytes[8..12].try_into().unwrap();
             
             let tag: u16;
             let field_type_raw: u16;
-            let value_count: u32;
+            let count: u32;
             
             match endianness {
                 Endianness::Little => {
                     tag = u16::from_le_bytes(tag_bytes);
                     field_type_raw = u16::from_le_bytes(field_type_bytes);
-                    value_count = u32::from_le_bytes(value_count_bytes);
+                    count = u32::from_le_bytes(count_bytes);
                 }
                 Endianness::Big => {
                     tag = u16::from_be_bytes(tag_bytes);
                     field_type_raw = u16::from_be_bytes(field_type_bytes);
-                    value_count = u32::from_be_bytes(value_count_bytes);
+                    count = u32::from_be_bytes(count_bytes);
                 }
             }
             
-            let field_state = FieldState::from_ifd_entry_lazy(field_type_raw, value_count, values_or_offset_bytes, endianness)?;
+            let field_state = FieldState::from_ifd_entry_lazy(field_type_raw, count, value_offset_bytes, endianness)?;
             fields_map.insert(tag, field_state);
         }
         
         let ifd_offset_bytes: [u8; 4] = ifd_remaining_buffer[ifd_remaining_buffer_size-4..].try_into().unwrap();
-        let raw_next_ifd_offset = match endianness {
+        let next_ifd_offset_raw = match endianness {
             Endianness::Little => u32::from_le_bytes(ifd_offset_bytes),
             Endianness::Big => u32::from_be_bytes(ifd_offset_bytes),
         };
         
-        let next_ifd_offset_opt = if raw_next_ifd_offset != 0 {
-            Some(raw_next_ifd_offset)
+        let next_ifd_offset_opt = if next_ifd_offset_raw != 0 {
+            Some(next_ifd_offset_raw)
         } else {
             None
         };
@@ -142,13 +142,13 @@ impl<R: Read + Seek> Subfile<R> {
         self.offset_to_next_ifd
     }
     
-    /// Returns a `FieldValues` reference if the field values fit into
+    /// Returns a `FieldValue` reference if the field value fit into
     /// the 4 bytes in the IFD. Will not trigger I/O operations.
-    pub fn get_ifd_field_values(&self, tag: u16) -> Option<&FieldValues> {
+    pub fn get_field_value_if_local(&self, tag: u16) -> Option<&FieldValue> {
         match self.fields.get(&tag) {
             Some(field_state) => {
                 match field_state {
-                    FieldState::Loaded(values) => Some(values),
+                    FieldState::Loaded(value) => Some(value),
                     _ => None,
                 }
             }

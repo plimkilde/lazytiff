@@ -63,7 +63,7 @@ pub fn size_of_type(field_type: FieldType) -> usize {
 }
 
 #[derive(Debug, PartialEq, Clone)]
-pub enum FieldValues {
+pub enum FieldValue {
     Byte(Vec<u8>),             //  1
     Ascii(Vec<u8>),            //  2 TODO: when to convert to std::ffi::CStr??
     Short(Vec<u16>),           //  3
@@ -130,7 +130,7 @@ impl SRational {
     }
 }
 
-pub fn compute_values_buffer_size(field_type: FieldType, count: u32) -> Option<usize> {
+pub fn compute_value_buffer_size(field_type: FieldType, count: u32) -> Option<usize> {
     let element_size = size_of_type(field_type);
     
     /* Return buffer size if `count` fits in a usize and the
@@ -141,38 +141,38 @@ pub fn compute_values_buffer_size(field_type: FieldType, count: u32) -> Option<u
     }
 }
 
-pub fn values_from_buffer(field_type: FieldType, count: u32, buffer: &[u8], endianness: Endianness) -> Result<FieldValues, TiffReadError> {
+pub fn value_from_buffer(field_type: FieldType, count: u32, buffer: &[u8], endianness: Endianness) -> Result<FieldValue, TiffReadError> {
     let count_usize = match usize::try_from(count) {
         Ok(count_usize) => count_usize,
         Err(_) => return Err(TiffReadError::ParseError),
     };
     let type_size = size_of_type(field_type);
-    let correct_buffer_size = compute_values_buffer_size(field_type, count).ok_or(TiffReadError::ParseError)?;
+    let correct_buffer_size = compute_value_buffer_size(field_type, count).ok_or(TiffReadError::ParseError)?;
     
     if buffer.len() == correct_buffer_size {
         let buffer_chunks = buffer.chunks_exact(type_size);
         
-        let values = values_from_chunks(field_type, buffer_chunks, endianness);
+        let value = value_from_chunks(field_type, buffer_chunks, endianness);
         
-        Ok(values)
+        Ok(value)
     } else {
         Err(TiffReadError::ParseError)
     }
 }
 
-fn values_from_chunks(field_type: FieldType, chunks: ChunksExact<u8>, endianness: Endianness) -> FieldValues {
+fn value_from_chunks(field_type: FieldType, chunks: ChunksExact<u8>, endianness: Endianness) -> FieldValue {
     /* The BYTE, ASCII, SBYTE and UNDEFINED data types are not endian-
      * sensitive. */
     match field_type {
-        Byte => FieldValues::Byte(chunks.map(|chunk| chunk[0]).collect()),
-        Ascii => FieldValues::Ascii(chunks.map(|chunk| chunk[0]).collect()),
+        Byte => FieldValue::Byte(chunks.map(|chunk| chunk[0]).collect()),
+        Ascii => FieldValue::Ascii(chunks.map(|chunk| chunk[0]).collect()),
         Short => {
             let values_iter: Box<dyn Iterator<Item = u16>> = match endianness {
                 Endianness::Little => Box::new(chunks.map(|chunk_bytes| u16::from_le_bytes(chunk_bytes.try_into().unwrap()))),
                 Endianness::Big => Box::new(chunks.map(|chunk_bytes| u16::from_be_bytes(chunk_bytes.try_into().unwrap()))),
             };
             
-            FieldValues::Short(values_iter.collect())
+            FieldValue::Short(values_iter.collect())
         }
         Long => {
             let values_iter: Box<dyn Iterator<Item = u32>> = match endianness {
@@ -180,7 +180,7 @@ fn values_from_chunks(field_type: FieldType, chunks: ChunksExact<u8>, endianness
                 Endianness::Big => Box::new(chunks.map(|chunk_bytes| u32::from_be_bytes(chunk_bytes.try_into().unwrap()))),
             };
             
-            FieldValues::Long(values_iter.collect())
+            FieldValue::Long(values_iter.collect())
         }
         Rational => {
             let values_iter: Box<dyn Iterator<Item = Rational>> = match endianness {
@@ -188,17 +188,17 @@ fn values_from_chunks(field_type: FieldType, chunks: ChunksExact<u8>, endianness
                 Endianness::Big => Box::new(chunks.map(|chunk_bytes| Rational::from_be_bytes(chunk_bytes.try_into().unwrap()))),
             };
             
-            FieldValues::Rational(values_iter.collect())
+            FieldValue::Rational(values_iter.collect())
         }
-        SByte => FieldValues::SByte(chunks.map(|chunk| chunk[0] as i8).collect()),
-        Undefined => FieldValues::Undefined(chunks.map(|chunk| chunk[0]).collect()),
+        SByte => FieldValue::SByte(chunks.map(|chunk| chunk[0] as i8).collect()),
+        Undefined => FieldValue::Undefined(chunks.map(|chunk| chunk[0]).collect()),
         SShort => {
             let values_iter: Box<dyn Iterator<Item = i16>> = match endianness {
                 Endianness::Little => Box::new(chunks.map(|chunk_bytes| i16::from_le_bytes(chunk_bytes.try_into().unwrap()))),
                 Endianness::Big => Box::new(chunks.map(|chunk_bytes| i16::from_be_bytes(chunk_bytes.try_into().unwrap()))),
             };
             
-            FieldValues::SShort(values_iter.collect())
+            FieldValue::SShort(values_iter.collect())
         }
         SLong => {
             let values_iter: Box<dyn Iterator<Item = i32>> = match endianness {
@@ -206,7 +206,7 @@ fn values_from_chunks(field_type: FieldType, chunks: ChunksExact<u8>, endianness
                 Endianness::Big => Box::new(chunks.map(|chunk_bytes| i32::from_be_bytes(chunk_bytes.try_into().unwrap()))),
             };
             
-            FieldValues::SLong(values_iter.collect())
+            FieldValue::SLong(values_iter.collect())
         }
         SRational => {
             let values_iter: Box<dyn Iterator<Item = SRational>> = match endianness {
@@ -214,7 +214,7 @@ fn values_from_chunks(field_type: FieldType, chunks: ChunksExact<u8>, endianness
                 Endianness::Big => Box::new(chunks.map(|chunk_bytes| SRational::from_be_bytes(chunk_bytes.try_into().unwrap()))),
             };
             
-            FieldValues::SRational(values_iter.collect())
+            FieldValue::SRational(values_iter.collect())
         }
         Float => {
             let values_iter: Box<dyn Iterator<Item = f32>> = match endianness {
@@ -222,7 +222,7 @@ fn values_from_chunks(field_type: FieldType, chunks: ChunksExact<u8>, endianness
                 Endianness::Big => Box::new(chunks.map(|chunk_bytes| f32::from_bits(u32::from_be_bytes(chunk_bytes.try_into().unwrap())))),
             };
             
-            FieldValues::Float(values_iter.collect())
+            FieldValue::Float(values_iter.collect())
         }
         Double => {
             let values_iter: Box<dyn Iterator<Item = f64>> = match endianness {
@@ -230,7 +230,7 @@ fn values_from_chunks(field_type: FieldType, chunks: ChunksExact<u8>, endianness
                 Endianness::Big => Box::new(chunks.map(|chunk_bytes| f64::from_bits(u64::from_be_bytes(chunk_bytes.try_into().unwrap())))),
             };
             
-            FieldValues::Double(values_iter.collect())
+            FieldValue::Double(values_iter.collect())
         }
     }
 }
