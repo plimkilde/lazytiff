@@ -11,10 +11,10 @@ use crate::error::TiffReadError::*;
 use FieldState::*;
 
 #[derive(Debug, PartialEq, Clone)]
-pub enum FieldState {
-    //Loaded {FieldValue, offset_opt: Option<u32>}, // TODO
-    Loaded(FieldValue),
+enum FieldState {
+    Local(FieldValue),
     NotLoaded {field_type: FieldType, count: u32, offset: u32},
+    Loaded {value: FieldValue, offset: u32},
     Unknown {field_type_raw: u16, count: u32, value_offset_bytes: [u8; 4]},
 }
 
@@ -33,7 +33,7 @@ impl FieldState {
                     
                     let value = value_from_buffer(field_type, count, &value_buffer, endianness)?;
                     
-                    Ok(Loaded(value))
+                    Ok(Local(value))
                 } else {
                     /* The value(s) did not fit in the IFD entry, skip
                      * loading data for now. */
@@ -148,11 +148,113 @@ impl<R: Read + Seek> Subfile<R> {
         match self.fields.get(&tag) {
             Some(field_state) => {
                 match field_state {
-                    FieldState::Loaded(value) => Some(value),
+                    FieldState::Local(value) => Some(value),
                     _ => None,
                 }
             }
             None => None,
+        }
+    }
+    
+    fn load_field_value(&mut self, tag: u16) -> Result<(), TiffReadError> {
+        match self.fields.get(&tag) {
+            Some(field_state) => {
+                match *field_state {
+                    FieldState::NotLoaded {field_type, count, offset} => {
+                        // TODO: overflow error type
+                        let required_buffer_size = compute_value_buffer_size(field_type, count).ok_or(ParseError)?;
+                        let mut value_buffer = vec![0u8; required_buffer_size];
+                        
+                        let mut buf_reader = self.buf_reader_ref.lock().unwrap();
+                        buf_reader.seek(std::io::SeekFrom::Start(u64::from(offset)))?;
+                        buf_reader.read_exact(&mut value_buffer)?;
+                        
+                        let value = value_from_buffer(field_type.clone(), count, &value_buffer, self.endianness)?;
+                        
+                        self.fields.insert(tag, Loaded {value, offset});
+                        
+                        Ok(())
+                    }
+                    _ => Ok(()),
+                }
+            }
+            None => Ok(()),
+        }
+    }
+    
+    fn unload_field_value(&mut self, tag: u16) {
+        match self.fields.get_mut(&tag) {
+            Some(field_state) => {
+                match field_state {
+                    FieldState::Loaded {value, offset} => {
+                        let field_type: FieldType;
+                        let count_usize: usize;
+                        
+                        /* needed to satisfy the borrow checker when
+                         * inserting new FieldState in self.fields */
+                        let offset: u32 = *offset;
+                        
+                        match value {
+                            FieldValue::Byte(byte_values) => {
+                                field_type = Byte;
+                                count_usize = byte_values.len();
+                            }
+                            FieldValue::Ascii(ascii_values) => {
+                                field_type = Ascii;
+                                count_usize = ascii_values.len();
+                            }
+                            FieldValue::Short(short_values) => {
+                                field_type = Short;
+                                count_usize = short_values.len();
+                            }
+                            FieldValue::Long(long_values) => {
+                                field_type = Long;
+                                count_usize = long_values.len();
+                            }
+                            FieldValue::Rational(rational_values) => {
+                                field_type = Rational;
+                                count_usize = rational_values.len();
+                            }
+                            FieldValue::SByte(sbyte_values) => {
+                                field_type = SByte;
+                                count_usize = sbyte_values.len();
+                            }
+                            FieldValue::Undefined(undefined_values) => {
+                                field_type = Undefined;
+                                count_usize = undefined_values.len();
+                            }
+                            FieldValue::SShort(sshort_values) => {
+                                field_type = SShort;
+                                count_usize = sshort_values.len();
+                            }
+                            FieldValue::SLong(slong_values) => {
+                                field_type = SLong;
+                                count_usize = slong_values.len();
+                            }
+                            FieldValue::SRational(srational_values) => {
+                                field_type = SRational;
+                                count_usize = srational_values.len();
+                            }
+                            FieldValue::Float(float_values) => {
+                                field_type = Float;
+                                count_usize = float_values.len();
+                            }
+                            FieldValue::Double(double_values) => {
+                                field_type = Double;
+                                count_usize = double_values.len();
+                            }
+                        }
+                        
+                        /* The FieldValue will always be built from a
+                         * u32 `count`, so this will always succeed. */
+                        let count: u32 = count_usize.try_into().unwrap();
+                        
+                        self.fields.insert(tag, NotLoaded {field_type: field_type, count: count, offset: offset});
+                    }
+                    _ => {},
+                }
+            }
+            None => {},
         }
     }
 }
