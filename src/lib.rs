@@ -1,3 +1,5 @@
+extern crate num_rational;
+
 use std::convert::TryInto;
 use std::io::{Read, Seek, BufReader};
 use std::sync::{Arc, Mutex};

@@ -5,3 +5,7 @@ authors = ["Peter Limkilde Svendsen <peter.limkilde@gmail.com>"]
 edition = "2018"
 
 [dependencies]
+
+[dependencies.num-rational]
+version = "0.2"
+default-features = false

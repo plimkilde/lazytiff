@@ -1,3 +1,4 @@
+use num_rational::Ratio;
 use std::convert::{TryFrom, TryInto};
 use std::slice::ChunksExact;
 
@@ -10,6 +11,11 @@ pub enum Endianness {
     Little,
     Big,
 }
+
+/* Note that this `Rational` type is not the same as the `Rational` type
+ * exposed by num-rational. */
+pub type Rational = Ratio<u32>;
+pub type SRational = Ratio<i32>;
 
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub enum FieldType {
@@ -78,56 +84,28 @@ pub enum FieldValue {
     Double(Vec<f64>),          // 12
 }
 
-#[derive(Debug, PartialEq, Clone)]
-pub struct Rational {
-    pub numerator: u32,
-    pub denominator: u32,
+fn rational_from_le_bytes(bytes: [u8; 8]) -> Rational {
+    let numer = u32::from_le_bytes(bytes[0..4].try_into().unwrap());
+    let denom = u32::from_le_bytes(bytes[4..8].try_into().unwrap());
+    Ratio::new_raw(numer, denom)
 }
 
-#[derive(Debug, PartialEq, Clone)]
-pub struct SRational {
-    pub numerator: i32,
-    pub denominator: i32,
+fn rational_from_be_bytes(bytes: [u8; 8]) -> Rational {
+    let numer = u32::from_be_bytes(bytes[0..4].try_into().unwrap());
+    let denom = u32::from_be_bytes(bytes[4..8].try_into().unwrap());
+    Ratio::new_raw(numer, denom)
 }
 
-impl Rational {
-    fn from_le_bytes(bytes: [u8; 8]) -> Self {
-        let numerator = u32::from_le_bytes(bytes[0..4].try_into().unwrap());
-        let denominator = u32::from_le_bytes(bytes[4..8].try_into().unwrap());
-        Rational {
-            numerator: numerator,
-            denominator: denominator,
-        }
-    }
-    
-    fn from_be_bytes(bytes: [u8; 8]) -> Self {
-        let numerator = u32::from_be_bytes(bytes[0..4].try_into().unwrap());
-        let denominator = u32::from_be_bytes(bytes[4..8].try_into().unwrap());
-        Rational {
-            numerator: numerator,
-            denominator: denominator,
-        }
-    }
+fn srational_from_le_bytes(bytes: [u8; 8]) -> SRational {
+    let numer = i32::from_le_bytes(bytes[0..4].try_into().unwrap());
+    let denom = i32::from_le_bytes(bytes[4..8].try_into().unwrap());
+    Ratio::new_raw(numer, denom)
 }
 
-impl SRational {
-    fn from_le_bytes(bytes: [u8; 8]) -> Self {
-        let numerator = i32::from_le_bytes(bytes[0..4].try_into().unwrap());
-        let denominator = i32::from_le_bytes(bytes[4..8].try_into().unwrap());
-        SRational {
-            numerator: numerator,
-            denominator: denominator,
-        }
-    }
-    
-    fn from_be_bytes(bytes: [u8; 8]) -> Self {
-        let numerator = i32::from_be_bytes(bytes[0..4].try_into().unwrap());
-        let denominator = i32::from_be_bytes(bytes[4..8].try_into().unwrap());
-        SRational {
-            numerator: numerator,
-            denominator: denominator,
-        }
-    }
+fn srational_from_be_bytes(bytes: [u8; 8]) -> SRational {
+    let numer = i32::from_be_bytes(bytes[0..4].try_into().unwrap());
+    let denom = i32::from_be_bytes(bytes[4..8].try_into().unwrap());
+    Ratio::new_raw(numer, denom)
 }
 
 pub fn compute_value_buffer_size(field_type: FieldType, count: u32) -> Option<usize> {
@@ -184,8 +162,8 @@ fn value_from_chunks(field_type: FieldType, chunks: ChunksExact<u8>, endianness:
         }
         Rational => {
             let values_iter: Box<dyn Iterator<Item = Rational>> = match endianness {
-                Endianness::Little => Box::new(chunks.map(|chunk_bytes| Rational::from_le_bytes(chunk_bytes.try_into().unwrap()))),
-                Endianness::Big => Box::new(chunks.map(|chunk_bytes| Rational::from_be_bytes(chunk_bytes.try_into().unwrap()))),
+                Endianness::Little => Box::new(chunks.map(|chunk_bytes| rational_from_le_bytes(chunk_bytes.try_into().unwrap()))),
+                Endianness::Big => Box::new(chunks.map(|chunk_bytes| rational_from_be_bytes(chunk_bytes.try_into().unwrap()))),
             };
             
             FieldValue::Rational(values_iter.collect())
@@ -210,8 +188,8 @@ fn value_from_chunks(field_type: FieldType, chunks: ChunksExact<u8>, endianness:
         }
         SRational => {
             let values_iter: Box<dyn Iterator<Item = SRational>> = match endianness {
-                Endianness::Little => Box::new(chunks.map(|chunk_bytes| SRational::from_le_bytes(chunk_bytes.try_into().unwrap()))),
-                Endianness::Big => Box::new(chunks.map(|chunk_bytes| SRational::from_be_bytes(chunk_bytes.try_into().unwrap()))),
+                Endianness::Little => Box::new(chunks.map(|chunk_bytes| srational_from_le_bytes(chunk_bytes.try_into().unwrap()))),
+                Endianness::Big => Box::new(chunks.map(|chunk_bytes| srational_from_be_bytes(chunk_bytes.try_into().unwrap()))),
             };
             
             FieldValue::SRational(values_iter.collect())
