@@ -158,10 +158,6 @@ pub fn compute_value_buffer_size(field_type: FieldType, count: u32) -> Option<us
 }
 
 pub fn value_from_buffer(field_type: FieldType, count: u32, buffer: &[u8], endianness: Endianness) -> Result<FieldValue, TiffReadError> {
-    let count_usize = match usize::try_from(count) {
-        Ok(count_usize) => count_usize,
-        Err(_) => return Err(TiffReadError::ParseError),
-    };
     let type_size = field_type.size_of();
     let correct_buffer_size = compute_value_buffer_size(field_type, count).ok_or(TiffReadError::ParseError)?;
     

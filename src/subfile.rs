@@ -4,7 +4,6 @@ use std::io::{Read, Seek, BufReader};
 use std::sync::{Arc, Mutex};
 
 use crate::types::*;
-use crate::types::FieldType::*;
 use crate::error::TiffReadError;
 use crate::error::TiffReadError::*;
 
@@ -172,7 +171,7 @@ impl<R: Read + Seek> Subfile<R> {
         }
     }
     
-    fn load_field_value(&mut self, tag: u16) -> Result<(), TiffReadError> {
+    pub fn load_field_value(&mut self, tag: u16) -> Result<(), TiffReadError> {
         match self.fields.get(&tag) {
             Some(field_state) => {
                 match *field_state {
@@ -198,7 +197,7 @@ impl<R: Read + Seek> Subfile<R> {
         }
     }
     
-    fn unload_field_value(&mut self, tag: u16) {
+    pub fn unload_field_value(&mut self, tag: u16) {
         match self.fields.get_mut(&tag) {
             Some(field_state) => {
                 match field_state {
