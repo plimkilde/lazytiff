@@ -156,6 +156,22 @@ impl<R: Read + Seek> Subfile<R> {
         }
     }
     
+    pub fn get_field_value(&mut self, tag: u16) -> Result<Option<&FieldValue>, TiffReadError> {
+        // No-op if field is local
+        self.load_field_value(tag)?;
+        
+        match self.fields.get(&tag) {
+            Some(field_state) => {
+                match field_state {
+                    FieldState::Local(value) => Ok(Some(value)),
+                    FieldState::Loaded {value, offset: _} => Ok(Some(value)),
+                    _ => Ok(None),
+                }
+            }
+            None => Ok(None),
+        }
+    }
+    
     fn load_field_value(&mut self, tag: u16) -> Result<(), TiffReadError> {
         match self.fields.get(&tag) {
             Some(field_state) => {
