@@ -171,6 +171,13 @@ impl<R: Read + Seek> Subfile<R> {
         }
     }
     
+    pub fn unload_all_field_values(&mut self) {
+        let tags: Vec<_> = self.fields.keys().cloned().collect();
+        for tag in tags {
+            self.unload_field_value(tag);
+        }
+    }
+    
     pub fn load_field_value(&mut self, tag: u16) -> Result<(), TiffReadError> {
         match self.fields.get(&tag) {
             Some(field_state) => {
