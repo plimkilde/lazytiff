@@ -33,38 +33,40 @@ pub enum FieldType {
     Double,    // 12
 }
 
-pub fn type_from_u16(field_type_raw: u16) -> Option<FieldType> {
-    match field_type_raw {
-        1 => Some(Byte),
-        2 => Some(Ascii),
-        3 => Some(Short),
-        4 => Some(Long),
-        5 => Some(Rational),
-        6 => Some(SByte),
-        7 => Some(Undefined),
-        8 => Some(SShort),
-        9 => Some(SLong),
-        10 => Some(SRational),
-        11 => Some(Float),
-        12 => Some(Double),
-        _ => None,
+impl FieldType {
+    pub fn from_u16(field_type_raw: u16) -> Option<FieldType> {
+        match field_type_raw {
+            1 => Some(Byte),
+            2 => Some(Ascii),
+            3 => Some(Short),
+            4 => Some(Long),
+            5 => Some(Rational),
+            6 => Some(SByte),
+            7 => Some(Undefined),
+            8 => Some(SShort),
+            9 => Some(SLong),
+            10 => Some(SRational),
+            11 => Some(Float),
+            12 => Some(Double),
+            _ => None,
+        }
     }
-}
-
-pub fn size_of_type(field_type: FieldType) -> usize {
-    match field_type {
-        Byte => 1,
-        Ascii => 1,
-        Short => 2,
-        Long => 4,
-        Rational => 8,
-        SByte => 1,
-        Undefined => 1,
-        SShort => 2,
-        SLong => 4,
-        SRational => 8,
-        Float => 4,
-        Double => 8,
+    
+    pub fn size_of(&self) -> usize {
+        match self {
+            Byte => 1,
+            Ascii => 1,
+            Short => 2,
+            Long => 4,
+            Rational => 8,
+            SByte => 1,
+            Undefined => 1,
+            SShort => 2,
+            SLong => 4,
+            SRational => 8,
+            Float => 4,
+            Double => 8,
+        }
     }
 }
 
@@ -109,7 +111,7 @@ fn srational_from_be_bytes(bytes: [u8; 8]) -> SRational {
 }
 
 pub fn compute_value_buffer_size(field_type: FieldType, count: u32) -> Option<usize> {
-    let element_size = size_of_type(field_type);
+    let element_size = field_type.size_of();
     
     /* Return buffer size if `count` fits in a usize and the
      * multiplication doesn't overflow. */
@@ -124,7 +126,7 @@ pub fn value_from_buffer(field_type: FieldType, count: u32, buffer: &[u8], endia
         Ok(count_usize) => count_usize,
         Err(_) => return Err(TiffReadError::ParseError),
     };
-    let type_size = size_of_type(field_type);
+    let type_size = field_type.size_of();
     let correct_buffer_size = compute_value_buffer_size(field_type, count).ok_or(TiffReadError::ParseError)?;
     
     if buffer.len() == correct_buffer_size {

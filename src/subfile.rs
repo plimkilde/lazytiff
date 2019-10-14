@@ -20,7 +20,7 @@ enum FieldState {
 
 impl FieldState {
     fn from_ifd_entry_lazy(field_type_raw: u16, count: u32, value_offset_bytes: [u8; 4], endianness: Endianness) -> Result<FieldState, TiffReadError> {
-        match type_from_u16(field_type_raw) {
+        match FieldType::from_u16(field_type_raw) {
             None => Ok(Unknown {field_type_raw: field_type_raw, count: count, value_offset_bytes: value_offset_bytes}),
             Some(field_type) => {
                 // TODO: new overflow error type?
