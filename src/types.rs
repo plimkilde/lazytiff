@@ -86,6 +86,42 @@ pub enum FieldValue {
     Double(Vec<f64>),          // 12
 }
 
+impl FieldValue {
+    pub fn field_type(&self) -> FieldType {
+        match self {
+            FieldValue::Byte(_) => FieldType::Byte,
+            FieldValue::Ascii(_) => FieldType::Ascii,
+            FieldValue::Short(_) => FieldType::Short,
+            FieldValue::Long(_) => FieldType::Long,
+            FieldValue::Rational(_) => FieldType::Rational,
+            FieldValue::SByte(_) => FieldType::SByte,
+            FieldValue::Undefined(_) => FieldType::Undefined,
+            FieldValue::SShort(_) => FieldType::SShort,
+            FieldValue::SLong(_) => FieldType::SLong,
+            FieldValue::SRational(_) => FieldType::SRational,
+            FieldValue::Float(_) => FieldType::Float,
+            FieldValue::Double(_) => FieldType::Double,
+        }
+    }
+    
+    pub fn count(&self) -> usize {
+        match self {
+            FieldValue::Byte(v) => v.len(),
+            FieldValue::Ascii(v) => v.len(),
+            FieldValue::Short(v) => v.len(),
+            FieldValue::Long(v) => v.len(),
+            FieldValue::Rational(v) => v.len(),
+            FieldValue::SByte(v) => v.len(),
+            FieldValue::Undefined(v) => v.len(),
+            FieldValue::SShort(v) => v.len(),
+            FieldValue::SLong(v) => v.len(),
+            FieldValue::SRational(v) => v.len(),
+            FieldValue::Float(v) => v.len(),
+            FieldValue::Double(v) => v.len(),
+        }
+    }
+}
+
 fn rational_from_le_bytes(bytes: [u8; 8]) -> Rational {
     let numer = u32::from_le_bytes(bytes[0..4].try_into().unwrap());
     let denom = u32::from_le_bytes(bytes[4..8].try_into().unwrap());

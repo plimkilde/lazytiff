@@ -187,67 +187,16 @@ impl<R: Read + Seek> Subfile<R> {
             Some(field_state) => {
                 match field_state {
                     FieldState::Loaded {value, offset} => {
-                        let field_type: FieldType;
-                        let count_usize: usize;
-                        
-                        /* needed to satisfy the borrow checker when
-                         * inserting new FieldState in self.fields */
-                        let offset: u32 = *offset;
-                        
-                        match value {
-                            FieldValue::Byte(byte_values) => {
-                                field_type = Byte;
-                                count_usize = byte_values.len();
-                            }
-                            FieldValue::Ascii(ascii_values) => {
-                                field_type = Ascii;
-                                count_usize = ascii_values.len();
-                            }
-                            FieldValue::Short(short_values) => {
-                                field_type = Short;
-                                count_usize = short_values.len();
-                            }
-                            FieldValue::Long(long_values) => {
-                                field_type = Long;
-                                count_usize = long_values.len();
-                            }
-                            FieldValue::Rational(rational_values) => {
-                                field_type = Rational;
-                                count_usize = rational_values.len();
-                            }
-                            FieldValue::SByte(sbyte_values) => {
-                                field_type = SByte;
-                                count_usize = sbyte_values.len();
-                            }
-                            FieldValue::Undefined(undefined_values) => {
-                                field_type = Undefined;
-                                count_usize = undefined_values.len();
-                            }
-                            FieldValue::SShort(sshort_values) => {
-                                field_type = SShort;
-                                count_usize = sshort_values.len();
-                            }
-                            FieldValue::SLong(slong_values) => {
-                                field_type = SLong;
-                                count_usize = slong_values.len();
-                            }
-                            FieldValue::SRational(srational_values) => {
-                                field_type = SRational;
-                                count_usize = srational_values.len();
-                            }
-                            FieldValue::Float(float_values) => {
-                                field_type = Float;
-                                count_usize = float_values.len();
-                            }
-                            FieldValue::Double(double_values) => {
-                                field_type = Double;
-                                count_usize = double_values.len();
-                            }
-                        }
+                        let field_type = value.field_type();
+                        let count_usize = value.count();
                         
                         /* The FieldValue will always be built from a
                          * u32 `count`, so this will always succeed. */
                         let count: u32 = count_usize.try_into().unwrap();
+                        
+                        /* needed to satisfy the borrow checker when
+                         * inserting new FieldState in self.fields */
+                        let offset: u32 = *offset;
                         
                         self.fields.insert(tag, NotLoaded {field_type: field_type, count: count, offset: offset});
                     }
