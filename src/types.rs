@@ -1,5 +1,6 @@
 use num_rational::Ratio;
 use std::convert::{TryFrom, TryInto};
+use std::fmt;
 use std::slice::ChunksExact;
 
 use crate::error::TiffReadError;
@@ -34,7 +35,7 @@ pub enum FieldType {
 }
 
 impl FieldType {
-    pub fn from_u16(field_type_raw: u16) -> Option<FieldType> {
+    pub fn from_u16(field_type_raw: u16) -> Option<Self> {
         match field_type_raw {
             1 => Some(Byte),
             2 => Some(Ascii),
@@ -67,6 +68,26 @@ impl FieldType {
             Float => 4,
             Double => 8,
         }
+    }
+}
+
+impl fmt::Display for FieldType {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let format_str = match self {
+            Byte => "BYTE",
+            Ascii => "ASCII",
+            Short => "SHORT",
+            Long => "LONG",
+            Rational => "RATIONAL",
+            SByte => "SBYTE",
+            Undefined => "UNDEFINED",
+            SShort => "SSHORT",
+            SLong => "SLONG",
+            SRational => "SRATIONAL",
+            Float => "FLOAT",
+            Double => "DOUBLE",
+        };
+        write!(f, "{}", format_str)
     }
 }
 
