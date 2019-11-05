@@ -9,6 +9,103 @@ use crate::error::TiffReadError::*;
 
 use FieldState::*;
 
+#[derive(Debug, Clone)]
+pub struct Field<R> {
+    buf_reader_ref: Arc<Mutex<BufReader<R>>>,
+    endianness: Endianness,
+    state: FieldState,
+}
+
+impl<R: Read + Seek> Field<R> {
+    pub fn field_type(&self) -> Option<FieldType> {
+        match &self.state {
+            FieldState::Local(value) => Some(value.field_type()),
+            FieldState::NotLoaded {field_type, count: _, offset: _} => {
+                Some(*field_type)
+            }
+            FieldState::Loaded {value, offset: _} => Some(value.field_type()),
+            FieldState::Unknown {field_type_raw: _, count: _, value_offset_bytes: _} => None,
+        }
+    }
+    
+    pub fn count(&self) -> u32 {
+        match &self.state {
+            FieldState::Local(value) => {
+                /* If we managed to build the FieldValue array in the
+                 * first place, it did fit in a u32. */
+                value.count().try_into().unwrap()
+            }
+            FieldState::NotLoaded {field_type: _, count, offset: _} => {
+                *count
+            }
+            FieldState::Loaded {value, offset: _} => {
+                value.count().try_into().unwrap()
+            }
+            FieldState::Unknown {field_type_raw: _, count, value_offset_bytes: _} => {
+                *count
+            }
+        }
+    }
+    
+    /// Returns a `FieldValue` reference if the field value fit into
+    /// the 4 bytes in the IFD. Will not trigger I/O operations.
+    pub fn get_value_if_local(&self) -> Option<&FieldValue> {
+        match &self.state {
+            FieldState::Local(value) => Some(&value),
+            _ => None,
+        }
+    }
+    
+    pub fn get_value(&mut self) -> Result<Option<&FieldValue>, TiffReadError> {
+        self.load()?;
+        
+        match &self.state {
+            FieldState::Local(value) => Ok(Some(&value)),
+            FieldState::Loaded {value, offset: _} => Ok(Some(&value)),
+            _ => Ok(None),
+        }
+    }
+    
+    pub fn load(&mut self) -> Result<(), TiffReadError> {
+        match self.state {
+            FieldState::NotLoaded {field_type, count, offset} => {
+                // TODO: overflow error type
+                let required_buffer_size = compute_value_buffer_size(field_type, count).ok_or(ParseError)?;
+                let mut value_buffer = vec![0u8; required_buffer_size];
+                
+                let mut buf_reader = self.buf_reader_ref.lock().unwrap();
+                buf_reader.seek(std::io::SeekFrom::Start(u64::from(offset)))?;
+                buf_reader.read_exact(&mut value_buffer)?;
+                
+                let value = value_from_buffer(field_type.clone(), count, &value_buffer, self.endianness)?;
+                
+                self.state = FieldState::Loaded {value, offset};
+                
+                Ok(())
+            }
+            _ => Ok(()),
+        }
+    }
+    
+    pub fn unload(&mut self) {
+        match &self.state {
+            FieldState::Loaded {value, offset} => {
+                let field_type = value.field_type();
+                let count_usize = value.count();
+                
+                /* The FieldValue will always be built from a
+                 * u32 `count`, so this will always succeed. */
+                let count: u32 = count_usize.try_into().unwrap();
+                
+                let offset: u32 = *offset;
+                
+                self.state = FieldState::NotLoaded {field_type: field_type, count: count, offset: offset};
+            }
+            _ => {},
+        }
+    }
+}
+
 #[derive(Debug, PartialEq, Clone)]
 enum FieldState {
     Local(FieldValue),
@@ -18,7 +115,7 @@ enum FieldState {
 }
 
 impl FieldState {
-    fn from_ifd_entry_lazy(field_type_raw: u16, count: u32, value_offset_bytes: [u8; 4], endianness: Endianness) -> Result<FieldState, TiffReadError> {
+    fn from_ifd_entry_data(field_type_raw: u16, count: u32, value_offset_bytes: [u8; 4], endianness: Endianness) -> Result<FieldState, TiffReadError> {
         match FieldType::from_u16(field_type_raw) {
             None => Ok(Unknown {field_type_raw: field_type_raw, count: count, value_offset_bytes: value_offset_bytes}),
             Some(field_type) => {
@@ -52,7 +149,7 @@ impl FieldState {
 pub struct Subfile<R> {
     buf_reader_ref: Arc<Mutex<BufReader<R>>>,
     endianness: Endianness,
-    fields: BTreeMap<u16, FieldState>,
+    fields: BTreeMap<u16, Field<R>>,
     offset_to_next_ifd: Option<u32>,
 }
 
@@ -113,8 +210,13 @@ impl<R: Read + Seek> Subfile<R> {
                 }
             }
             
-            let field_state = FieldState::from_ifd_entry_lazy(field_type_raw, count, value_offset_bytes, endianness)?;
-            fields_map.insert(tag, field_state);
+            let field_state = FieldState::from_ifd_entry_data(field_type_raw, count, value_offset_bytes, endianness)?;
+            let field = Field {
+                buf_reader_ref: buf_reader_ref.clone(),
+                endianness: endianness,
+                state: field_state,
+            };
+            fields_map.insert(tag, field);
         }
         
         let ifd_offset_bytes: [u8; 4] = ifd_remaining_buffer[ifd_remaining_buffer_size-4..].try_into().unwrap();
@@ -141,91 +243,26 @@ impl<R: Read + Seek> Subfile<R> {
         self.offset_to_next_ifd
     }
     
-    /// Returns a `FieldValue` reference if the field value fit into
-    /// the 4 bytes in the IFD. Will not trigger I/O operations.
-    pub fn get_field_value_if_local(&self, tag: u16) -> Option<&FieldValue> {
-        match self.fields.get(&tag) {
-            Some(field_state) => {
-                match field_state {
-                    FieldState::Local(value) => Some(value),
-                    _ => None,
-                }
-            }
-            None => None,
-        }
+    pub fn get_field(&self, tag: u16) -> Option<&Field<R>> {
+        self.fields.get(&tag)
     }
     
-    pub fn get_field_value(&mut self, tag: u16) -> Result<Option<&FieldValue>, TiffReadError> {
-        // No-op if field is local
-        self.load_field_value(tag)?;
-        
-        match self.fields.get(&tag) {
-            Some(field_state) => {
-                match field_state {
-                    FieldState::Local(value) => Ok(Some(value)),
-                    FieldState::Loaded {value, offset: _} => Ok(Some(value)),
-                    _ => Ok(None),
-                }
-            }
-            None => Ok(None),
+    pub fn get_field_mut(&mut self, tag: u16) -> Option<&mut Field<R>> {
+        self.fields.get_mut(&tag)
+    }
+    
+    pub fn load_all_field_values(&mut self) -> Result<(), TiffReadError> {
+        let tags: Vec<_> = self.fields.keys().cloned().collect();
+        for tag in tags {
+            self.get_field_mut(tag).unwrap().load()?;
         }
+        Ok(())
     }
     
     pub fn unload_all_field_values(&mut self) {
         let tags: Vec<_> = self.fields.keys().cloned().collect();
         for tag in tags {
-            self.unload_field_value(tag);
-        }
-    }
-    
-    pub fn load_field_value(&mut self, tag: u16) -> Result<(), TiffReadError> {
-        match self.fields.get(&tag) {
-            Some(field_state) => {
-                match *field_state {
-                    FieldState::NotLoaded {field_type, count, offset} => {
-                        // TODO: overflow error type
-                        let required_buffer_size = compute_value_buffer_size(field_type, count).ok_or(ParseError)?;
-                        let mut value_buffer = vec![0u8; required_buffer_size];
-                        
-                        let mut buf_reader = self.buf_reader_ref.lock().unwrap();
-                        buf_reader.seek(std::io::SeekFrom::Start(u64::from(offset)))?;
-                        buf_reader.read_exact(&mut value_buffer)?;
-                        
-                        let value = value_from_buffer(field_type.clone(), count, &value_buffer, self.endianness)?;
-                        
-                        self.fields.insert(tag, Loaded {value, offset});
-                        
-                        Ok(())
-                    }
-                    _ => Ok(()),
-                }
-            }
-            None => Ok(()),
-        }
-    }
-    
-    pub fn unload_field_value(&mut self, tag: u16) {
-        match self.fields.get_mut(&tag) {
-            Some(field_state) => {
-                match field_state {
-                    FieldState::Loaded {value, offset} => {
-                        let field_type = value.field_type();
-                        let count_usize = value.count();
-                        
-                        /* The FieldValue will always be built from a
-                         * u32 `count`, so this will always succeed. */
-                        let count: u32 = count_usize.try_into().unwrap();
-                        
-                        /* needed to satisfy the borrow checker when
-                         * inserting new FieldState in self.fields */
-                        let offset: u32 = *offset;
-                        
-                        self.fields.insert(tag, NotLoaded {field_type: field_type, count: count, offset: offset});
-                    }
-                    _ => {},
-                }
-            }
-            None => {},
+            self.get_field_mut(tag).unwrap().unload();
         }
     }
 }
