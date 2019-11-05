@@ -156,7 +156,7 @@ mod tests {
         tiff_reader.read_all_ifds().unwrap();
         assert_eq!(tiff_reader.subfiles.len(), 1);
         assert_eq!(
-            tiff_reader.subfiles[0].get_field_value_if_local(1337),
+            tiff_reader.subfiles[0].get_field(1337).unwrap().get_value_if_local(),
             Some(&types::FieldValue::Byte(vec![202, 254, 190]))
         );
         println!("{:#?}", tiff_reader);
