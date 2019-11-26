@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 
 use types::Endianness;
 use subfile::Subfile;
-use error::TiffReadError;
+use error::ParseError;
 
 mod types;
 mod subfile;
@@ -27,11 +27,12 @@ pub struct Header {
 }
 
 impl Header {
-    fn from_bytes(bytes: &[u8; 8]) -> Result<Self, TiffReadError> {
-        let endianness = match &bytes[0..4] {
+    fn from_bytes(bytes: &[u8; 8]) -> Result<Self, ParseError> {
+        let magic_number = &bytes[0..4];
+        let endianness = match magic_number {
             b"II\x2A\x00" => Endianness::Little,
             b"MM\x00\x2A" => Endianness::Big,
-            _ => return Err(TiffReadError::ParseError)
+            _ => return Err(ParseError::new(format!("Unrecognized magic number: \"{}\"", error::escaped_string_from_bytes(magic_number))))
         };
         
         let offset_bytes: [u8; 4] = bytes[4..8].try_into().unwrap();
@@ -49,7 +50,7 @@ impl Header {
 }
 
 impl<R: Read + Seek> TiffReader<R> {
-    pub fn new(reader: R) -> Result<Self, TiffReadError> {
+    pub fn new(reader: R) -> Result<Self, Box<dyn std::error::Error>> {
         let mut buf_reader = BufReader::new(reader);
         let mut header_bytes = [0u8; 8];
         buf_reader.seek(std::io::SeekFrom::Start(0))?;
@@ -67,11 +68,11 @@ impl<R: Read + Seek> TiffReader<R> {
             })
         }
         else {
-            Err(TiffReadError::ParseError)
+            Err(ParseError::new(format!("Offset to first IFD too small (found offset {}, expected >= 8)", header.offset_to_first_ifd).to_string()).into())
         }
     }
     
-    pub fn read_all_ifds(&mut self) -> Result<(), TiffReadError> {
+    pub fn read_all_ifds(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         let mut ifd_offset = self.offset_to_first_ifd;
         while ifd_offset != 0 {
             let subfile = Subfile::new(self.buf_reader_ref.clone(), ifd_offset, self.endianness)?;

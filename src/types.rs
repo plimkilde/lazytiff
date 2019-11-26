@@ -3,7 +3,7 @@ use std::convert::{TryFrom, TryInto};
 use std::fmt;
 use std::slice::ChunksExact;
 
-use crate::error::TiffReadError;
+use crate::error::ParseError;
 
 use FieldType::*;
 
@@ -178,19 +178,16 @@ pub fn compute_value_buffer_size(field_type: FieldType, count: u32) -> Option<us
     }
 }
 
-pub fn value_from_buffer(field_type: FieldType, count: u32, buffer: &[u8], endianness: Endianness) -> Result<FieldValue, TiffReadError> {
+pub fn value_from_buffer(field_type: FieldType, count: u32, buffer: &[u8], endianness: Endianness) -> Result<FieldValue, ParseError> {
     let type_size = field_type.size_of();
-    let correct_buffer_size = compute_value_buffer_size(field_type, count).ok_or(TiffReadError::ParseError)?;
+    let correct_buffer_size = compute_value_buffer_size(field_type, count).ok_or(ParseError::new("Required buffer size too big".to_string()))?;
     
-    if buffer.len() == correct_buffer_size {
-        let buffer_chunks = buffer.chunks_exact(type_size);
-        
-        let value = value_from_chunks(field_type, buffer_chunks, endianness);
-        
-        Ok(value)
-    } else {
-        Err(TiffReadError::ParseError)
-    }
+    assert_eq!(buffer.len(), correct_buffer_size, "Expected buffer of size {}, got size {}", correct_buffer_size, buffer.len());
+    let buffer_chunks = buffer.chunks_exact(type_size);
+    
+    let value = value_from_chunks(field_type, buffer_chunks, endianness);
+    
+    Ok(value)
 }
 
 fn value_from_chunks(field_type: FieldType, chunks: ChunksExact<u8>, endianness: Endianness) -> FieldValue {
