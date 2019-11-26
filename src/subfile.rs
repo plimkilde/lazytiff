@@ -4,8 +4,7 @@ use std::io::{Read, Seek, BufReader};
 use std::sync::{Arc, Mutex};
 
 use crate::types::*;
-use crate::error::TiffReadError;
-use crate::error::TiffReadError::*;
+use crate::error::ParseError;
 
 use FieldState::*;
 
@@ -56,7 +55,7 @@ impl<R: Read + Seek> Field<R> {
         }
     }
     
-    pub fn get_value(&mut self) -> Result<Option<&FieldValue>, TiffReadError> {
+    pub fn get_value(&mut self) -> Result<Option<&FieldValue>, Box<dyn std::error::Error>> {
         self.load()?;
         
         match &self.state {
@@ -66,11 +65,11 @@ impl<R: Read + Seek> Field<R> {
         }
     }
     
-    pub fn load(&mut self) -> Result<(), TiffReadError> {
+    pub fn load(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         match self.state {
             FieldState::NotLoaded {field_type, count, offset} => {
                 // TODO: overflow error type
-                let required_buffer_size = compute_value_buffer_size(field_type, count).ok_or(ParseError)?;
+                let required_buffer_size = compute_value_buffer_size(field_type, count).ok_or(ParseError::new("Required buffer size too big".to_string()))?;
                 let mut value_buffer = vec![0u8; required_buffer_size];
                 
                 let mut buf_reader = self.buf_reader_ref.lock().unwrap();
@@ -115,12 +114,12 @@ enum FieldState {
 }
 
 impl FieldState {
-    fn from_ifd_entry_data(field_type_raw: u16, count: u32, value_offset_bytes: [u8; 4], endianness: Endianness) -> Result<FieldState, TiffReadError> {
+    fn from_ifd_entry_data(field_type_raw: u16, count: u32, value_offset_bytes: [u8; 4], endianness: Endianness) -> Result<FieldState, Box<dyn std::error::Error>> {
         match FieldType::from_u16(field_type_raw) {
             None => Ok(Unknown {field_type_raw: field_type_raw, count: count, value_offset_bytes: value_offset_bytes}),
             Some(field_type) => {
                 // TODO: new overflow error type?
-                let required_buffer_size = compute_value_buffer_size(field_type, count).ok_or(ParseError)?;
+                let required_buffer_size = compute_value_buffer_size(field_type, count).ok_or(ParseError::new("Required buffer size too big".to_string()))?;
                 
                 if required_buffer_size <= 4 {
                     /* The value(s) fit in the IFD entry, load them
@@ -154,7 +153,7 @@ pub struct Subfile<R> {
 }
 
 impl<R: Read + Seek> Subfile<R> {
-    pub fn new(buf_reader_ref: Arc<Mutex<BufReader<R>>>, offset: u32, endianness: Endianness) -> Result<Self, TiffReadError> {
+    pub fn new(buf_reader_ref: Arc<Mutex<BufReader<R>>>, offset: u32, endianness: Endianness) -> Result<Self, Box<dyn std::error::Error>> {
         let ifd_entry_count: u16;
         let ifd_remaining_buffer_size: usize;
         let mut ifd_remaining_buffer: Vec<u8>;
@@ -251,7 +250,7 @@ impl<R: Read + Seek> Subfile<R> {
         self.fields.get_mut(&tag)
     }
     
-    pub fn load_all_field_values(&mut self) -> Result<(), TiffReadError> {
+    pub fn load_all_field_values(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         let tags: Vec<_> = self.fields.keys().cloned().collect();
         for tag in tags {
             self.get_field_mut(tag).unwrap().load()?;

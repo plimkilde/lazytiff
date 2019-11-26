@@ -1,19 +1,28 @@
 use std::fmt;
 
 #[derive(Debug)]
-pub enum TiffReadError {
-    IoError(std::io::Error),
-    ParseError, // TODO: add payload
+pub struct ParseError {
+    message: String,
 }
 
-impl fmt::Display for TiffReadError {
+impl ParseError {
+    pub fn new(message: String) -> Self {
+        ParseError {
+            message: message,
+        }
+    }
+}
+
+impl fmt::Display for ParseError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "error reading TIFF file")
+        write!(f, "{}", self.message)
     }
 }
 
-impl From<std::io::Error> for TiffReadError {
-    fn from(error: std::io::Error) -> Self {
-        TiffReadError::IoError(error)
-    }
+impl std::error::Error for ParseError {
+}
+
+pub fn escaped_string_from_bytes(bytes: &[u8]) -> String {
+    let escaped_bytes: Vec<u8> = bytes.iter().map(|c| std::ascii::escape_default(*c)).flatten().collect();
+    String::from_utf8_lossy(&escaped_bytes).to_string()
 }
