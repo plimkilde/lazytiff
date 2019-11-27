@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 extern crate num_rational;
 
 use std::convert::TryInto;
