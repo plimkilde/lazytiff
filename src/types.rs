@@ -94,7 +94,7 @@ impl fmt::Display for FieldType {
 #[derive(Debug, PartialEq, Clone)]
 pub enum FieldValue {
     Byte(Vec<u8>),             //  1
-    Ascii(Vec<u8>),            //  2 TODO: when to convert to std::ffi::CStr??
+    Ascii(String),             //  2
     Short(Vec<u16>),           //  3
     Long(Vec<u32>),            //  4
     Rational(Vec<Rational>),   //  5
@@ -128,7 +128,7 @@ impl FieldValue {
     pub fn count(&self) -> usize {
         match self {
             FieldValue::Byte(v) => v.len(),
-            FieldValue::Ascii(v) => v.len(),
+            FieldValue::Ascii(s) => s.len(),
             FieldValue::Short(v) => v.len(),
             FieldValue::Long(v) => v.len(),
             FieldValue::Rational(v) => v.len(),
@@ -195,7 +195,15 @@ fn value_from_chunks(field_type: FieldType, chunks: ChunksExact<u8>, endianness:
      * sensitive. */
     match field_type {
         Byte => FieldValue::Byte(chunks.map(|chunk| chunk[0]).collect()),
-        Ascii => FieldValue::Ascii(chunks.map(|chunk| chunk[0]).collect()),
+        Ascii => {
+            let byte_vec: Vec<u8> = chunks.map(|chunk| chunk[0]).collect();
+            
+            /* Handle field value as null-terminated string, even if the
+             * null byte is not the last one. */
+            let relevant_slice = &byte_vec[..byte_vec.iter().position(|&byte| byte == 0).unwrap_or(byte_vec.len())];
+            
+            FieldValue::Ascii(String::from_utf8_lossy(&relevant_slice).to_string())
+        }
         Short => {
             let values_iter: Box<dyn Iterator<Item = u16>> = match endianness {
                 Endianness::Little => Box::new(chunks.map(|chunk_bytes| u16::from_le_bytes(chunk_bytes.try_into().unwrap()))),
